@@ -1,0 +1,23 @@
+testdata1:
+  environment: preview
+  email: ddjking998@gmail.com
+  mail_subject: Your login code for Buzzing_dev
+  mail_provider: gmail
+  expected_session_status: 200
+  expected_auth_levels: [1, 2]
+
+testdata2:
+  environment: preview
+  email: "ddjking998@gmail.com"  # 填已在 Preview 建好的 Mailosaur 测试账号邮箱
+  mail_subject: Your login code for Buzzing_dev
+  mail_provider: mailosaur
+  expected_session_status: 200
+  expected_auth_levels: [1, 2]
+
+prod_testdata:
+  environment: prod
+  email: ""  # 填写已存在的生产回归专用账号
+  mail_subject: ""  # 填写生产验证码邮件标题
+  mail_provider: mailosaur
+  expected_session_status: 200
+  expected_auth_levels: [1, 2]

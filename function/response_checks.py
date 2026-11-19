@@ -4,7 +4,7 @@ from jsonschema import Draft7Validator
 
 def expect_json(response, status):
     if response.status_code == 403 and "error code: 1010" in response.text.lower():
-        pytest.fail("Preview 网关拒绝请求（HTTP 403 / 1010）", pytrace=False)
+        pytest.fail("API 网关拒绝请求（HTTP 403 / 1010）", pytrace=False)
     if response.status_code != status:
         pytest.fail(f"期望 HTTP {status}，实际 HTTP {response.status_code}", pytrace=False)
     try:

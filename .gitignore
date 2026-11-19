@@ -3,6 +3,7 @@
 __pycache__/
 .pytest_cache/
 reports/
+.local/
 .env
 .env.*
 !.env.example

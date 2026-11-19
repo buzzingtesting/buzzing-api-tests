@@ -1,0 +1,59 @@
+name: Buzzing API scenarios
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: API environment
+        type: choice
+        options:
+          - preview
+          - prod
+        default: preview
+      access_only:
+        description: Only verify API access
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  scenarios:
+    runs-on: ${{ vars.BUZZING_RUNNER_LABEL || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    env:
+      BUZZING_ENV: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check API access
+        shell: bash
+        run: |
+          mkdir -p reports
+          python -m function.preview_access 2>&1 | tee reports/api-access.log
+      - name: Run scenario tests
+        if: ${{ !inputs.access_only }}
+        env:
+          BUZZING_TESTDATA: ${{ inputs.environment == 'prod' && 'prod_testdata' || 'testdata2' }}
+          MAILOSAUR_SERVER_ID: ${{ inputs.environment == 'preview' && vars.MAILOSAUR_SERVER_ID || '' }}
+          MAILOSAUR_API_KEY: ${{ inputs.environment == 'preview' && secrets.MAILOSAUR_API_KEY || '' }}
+          PROD_MAILOSAUR_SERVER_ID: ${{ inputs.environment == 'prod' && vars.PROD_MAILOSAUR_SERVER_ID || '' }}
+          PROD_MAILOSAUR_API_KEY: ${{ inputs.environment == 'prod' && secrets.PROD_MAILOSAUR_API_KEY || '' }}
+          BUZZING_PROD_PRIVY_APP_ID: ${{ vars.BUZZING_PROD_PRIVY_APP_ID }}
+          BUZZING_PROD_PRIVY_CLIENT_ID: ${{ vars.BUZZING_PROD_PRIVY_CLIENT_ID }}
+        run: python run.py
+      - name: Upload logs and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.environment }}-scenarios
+          path: |
+            reports/api-access.log
+            reports/run-*/

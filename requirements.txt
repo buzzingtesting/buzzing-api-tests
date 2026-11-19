@@ -2,3 +2,5 @@ pytest==8.4.2
 httpx==0.28.1
 allure-pytest==2.15.0
 jsonschema==4.25.1
+PyYAML==6.0.3
+mailosaur==8.1.1
