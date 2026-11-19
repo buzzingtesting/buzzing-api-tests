@@ -1,6 +1,9 @@
 name: Buzzing API scenarios
 
 on:
+  schedule:
+    - cron: '0 9 * * *'
+      timezone: Asia/Shanghai
   workflow_dispatch:
     inputs:
       environment:
@@ -22,13 +25,16 @@ jobs:
   scenarios:
     runs-on: ${{ vars.BUZZING_RUNNER_LABEL || 'ubuntu-latest' }}
     timeout-minutes: 10
+    concurrency:
+      group: buzzing-${{ inputs.environment || 'preview' }}
+      cancel-in-progress: false
     env:
-      BUZZING_ENV: ${{ inputs.environment }}
+      BUZZING_ENV: ${{ inputs.environment || 'preview' }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
       - name: Install dependencies
@@ -38,22 +44,58 @@ jobs:
         run: |
           mkdir -p reports
           python -m function.preview_access 2>&1 | tee reports/api-access.log
+      - uses: actions/setup-java@v5
+        if: ${{ !inputs.access_only }}
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Allure CLI
+        if: ${{ !inputs.access_only }}
+        shell: bash
+        run: |
+          allure_version=2.34.0
+          curl --fail --silent --show-error --location --max-time 90 \
+            "https://github.com/allure-framework/allure2/releases/download/${allure_version}/allure-${allure_version}.tgz" \
+            --output "$RUNNER_TEMP/allure.tgz"
+          tar -xzf "$RUNNER_TEMP/allure.tgz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/allure-${allure_version}/bin" >> "$GITHUB_PATH"
       - name: Run scenario tests
+        id: scenario_tests
         if: ${{ !inputs.access_only }}
         env:
-          BUZZING_TESTDATA: ${{ inputs.environment == 'prod' && 'prod_testdata' || 'testdata2' }}
-          MAILOSAUR_SERVER_ID: ${{ inputs.environment == 'preview' && vars.MAILOSAUR_SERVER_ID || '' }}
-          MAILOSAUR_API_KEY: ${{ inputs.environment == 'preview' && secrets.MAILOSAUR_API_KEY || '' }}
-          PROD_MAILOSAUR_SERVER_ID: ${{ inputs.environment == 'prod' && vars.PROD_MAILOSAUR_SERVER_ID || '' }}
-          PROD_MAILOSAUR_API_KEY: ${{ inputs.environment == 'prod' && secrets.PROD_MAILOSAUR_API_KEY || '' }}
+          BUZZING_TESTDATA: ${{ env.BUZZING_ENV == 'prod' && 'prod_testdata' || vars.BUZZING_PREVIEW_TESTDATA || 'testdata1' }}
+          BUZZING_GMAIL_APP_PASSWORD: ${{ env.BUZZING_ENV == 'preview' && secrets.BUZZING_GMAIL_APP_PASSWORD || '' }}
+          MAILOSAUR_SERVER_ID: ${{ env.BUZZING_ENV == 'preview' && vars.MAILOSAUR_SERVER_ID || '' }}
+          MAILOSAUR_API_KEY: ${{ env.BUZZING_ENV == 'preview' && secrets.MAILOSAUR_API_KEY || '' }}
+          PROD_MAILOSAUR_SERVER_ID: ${{ env.BUZZING_ENV == 'prod' && vars.PROD_MAILOSAUR_SERVER_ID || '' }}
+          PROD_MAILOSAUR_API_KEY: ${{ env.BUZZING_ENV == 'prod' && secrets.PROD_MAILOSAUR_API_KEY || '' }}
           BUZZING_PROD_PRIVY_APP_ID: ${{ vars.BUZZING_PROD_PRIVY_APP_ID }}
           BUZZING_PROD_PRIVY_CLIENT_ID: ${{ vars.BUZZING_PROD_PRIVY_CLIENT_ID }}
-        run: python run.py
+        run: |
+          allure --version
+          python run.py
+      - name: Upload Allure HTML
+        id: allure_report
+        if: ${{ !cancelled() && steps.scenario_tests.outcome != 'skipped' && hashFiles('reports/allure-report/index.html') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.BUZZING_ENV }}-allure-report
+          path: reports/allure-report/index.html
+          if-no-files-found: error
       - name: Upload logs and reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: ${{ inputs.environment }}-scenarios
+          name: ${{ env.BUZZING_ENV }}-scenarios
           path: |
             reports/api-access.log
             reports/run-*/
+      - name: Email the Preview report
+        if: ${{ !cancelled() && !inputs.access_only && env.BUZZING_ENV == 'preview' }}
+        env:
+          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
+          BUZZING_REPORT_FROM: ${{ vars.BUZZING_REPORT_FROM }}
+          BUZZING_REPORT_TO: ${{ vars.BUZZING_REPORT_TO }}
+          REPORT_OUTCOME: ${{ steps.scenario_tests.outcome }}
+          REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
+        run: python -m function.email_report

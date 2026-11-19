@@ -36,11 +36,16 @@ Gmail 应用专用密码从 `BUZZING_GMAIL_APP_PASSWORD` 或本机的 `.local/gm
 
 本项目可以独立放在个人 GitHub 的私有仓库中。首次在 **Actions → Buzzing API scenarios → Run workflow** 验证时，选择 `preview` 并保留默认勾选的 **Only verify API access**。这次只跑只读预检，可以直接下载 **preview-scenarios** 产物里的 `api-access.log`，用于核对 Runner 的 HTTPX 连通性。
 
-CI 默认用 GitHub 托管的 `ubuntu-latest`。使用自有 Runner 时，可用仓库变量 `BUZZING_RUNNER_LABEL` 指定标签。配置好相应环境的测试数据和收件凭证后，取消勾选 **Only verify API access** 即可执行场景。在仓库的 **Settings → Secrets and variables → Actions** 中配置以下值。
+CI 默认用 GitHub 托管的 `ubuntu-latest`。使用自有 Runner 时，可用仓库变量 `BUZZING_RUNNER_LABEL` 指定标签。每天北京时间 09:00 自动运行 Preview 场景。手动运行场景时，选择环境并取消勾选 **Only verify API access**。
+
+Preview 场景结束后会发送邮件，包含本轮结果、GitHub Actions 运行链接和 Allure HTML 的下载链接。登录有仓库访问权限的 GitHub 账号下载，解压后打开 `index.html`。测试失败时同样发送，若未能生成 HTML，邮件会提供运行链接。
+
+在仓库的 **Settings → Secrets and variables → Actions** 中配置以下值。
 
 | 环境 | YAML 数据组 | 仓库 Variables | 仓库 Secrets |
 |---|---|---|---|
-| Preview | `testdata2` | `MAILOSAUR_SERVER_ID` | `MAILOSAUR_API_KEY` |
+| Preview 默认 | `testdata1` | `BUZZING_REPORT_FROM`、`BUZZING_REPORT_TO` | `BUZZING_GMAIL_APP_PASSWORD`，用于 Gmail 取码和发报告 |
+| Preview 改用 Mailosaur 取码 | `testdata2` | `BUZZING_PREVIEW_TESTDATA=testdata2`、`MAILOSAUR_SERVER_ID` | `MAILOSAUR_API_KEY`，发送报告仍用 Gmail 的 Secret |
 | Prod | `prod_testdata` | `PROD_MAILOSAUR_SERVER_ID`、`BUZZING_PROD_PRIVY_APP_ID`、按需设置 `BUZZING_PROD_PRIVY_CLIENT_ID` | `PROD_MAILOSAUR_API_KEY` |
 
 本地用同一个入口预检，运行 `.venv/bin/python -m function.preview_access`。HTTPX 使用默认 User-Agent、8 秒超时、关闭自动重定向。预检覆盖匿名会话、包装响应成功码和未登录拒绝码。
