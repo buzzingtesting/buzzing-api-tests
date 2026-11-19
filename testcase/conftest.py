@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import allure
 import pytest
 import yaml
 
@@ -8,19 +9,20 @@ from function.identity import get_test_jwt
 from function.settings import check_account_environment, get_testdata
 
 
-DATA_FILE = Path(__file__).resolve().parents[1] / "email_login.yaml"
+DATA_FILE = Path(__file__).resolve().parents[1] / "ci.yaml"
 
 
 @pytest.fixture
-def test_account():
-    """从 YAML 读取本轮选中的测试账号。"""
-    case_name = get_testdata()
+def test_account(request):
+    """优先使用场景指定的账号，否则使用当前环境的默认账号。"""
+    account_name = get_testdata(getattr(request, "param", None))
     data = yaml.safe_load(DATA_FILE.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or case_name not in data:
-        pytest.fail("email_login.yaml 中没有选中的测试数据", pytrace=False)
-    account = data[case_name]
+    account = data.get(account_name) if isinstance(data, dict) else None
+    if not isinstance(account, dict):
+        pytest.fail(f"ci.yaml 中没有账号 {account_name}", pytrace=False)
     check_account_environment(account)
-    return case_name, account
+    allure.dynamic.parameter("测试账号", account_name)
+    return account_name, account
 
 
 @pytest.fixture

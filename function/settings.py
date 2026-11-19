@@ -9,7 +9,7 @@ WEB_ORIGINS = {
     "preview": "https://preview.buzzing.app",
     "prod": "https://www.buzzing.app",
 }
-DEFAULT_TESTDATA = {"preview": "testdata1", "prod": "prod_testdata"}
+DEFAULT_TESTDATA = {"preview": "tester1", "prod": "prod_testdata"}
 
 
 def get_environment():
@@ -19,10 +19,15 @@ def get_environment():
     return environment
 
 
-def get_testdata():
-    return os.getenv("BUZZING_TESTDATA", DEFAULT_TESTDATA[get_environment()])
+def get_testdata(account_name=None):
+    environment = get_environment()
+    if account_name is None:
+        account_name = os.getenv("BUZZING_TESTDATA", DEFAULT_TESTDATA[environment])
+    if environment == "preview" and account_name == "testdata1":
+        return "tester1"
+    return account_name
 
 
 def check_account_environment(account):
     if account.get("environment", "preview") != get_environment():
-        raise ValueError("数据组和运行环境不匹配，请检查 email_login.yaml")
+        raise ValueError("数据组和运行环境不匹配，请检查 ci.yaml")

@@ -17,17 +17,17 @@ def request_email_code(privy_client, account):
     check_account_environment(account)
     email = account["email"]
     if not email or "@" not in email:
-        pytest.fail("请在 email_login.yaml 填好当前环境的测试账号邮箱", pytrace=False)
+        pytest.fail("请在 ci.yaml 填好当前环境的测试账号邮箱", pytrace=False)
     subject = account.get("mail_subject")
     if not subject or not subject.strip():
-        pytest.fail("请在 email_login.yaml 填好当前账号的验证码邮件标题", pytrace=False)
-    readers = {"gmail": get_gmail_code, "mailosaur": get_mailosaur_code}
-    read_code = readers.get(account.get("mail_provider", "gmail"))
-    if read_code is None:
-        pytest.fail("mail_provider 只支持 gmail 或 mailosaur", pytrace=False)
-
+        pytest.fail("请在 ci.yaml 填好当前账号的验证码邮件标题", pytrace=False)
+    provider = account.get("mail_provider", "gmail")
     send_code = partial(send_email_code, privy_client, email)
-    return read_code(email, subject, send_code)
+    if provider == "gmail":
+        return get_gmail_code(email, subject, send_code, password_env=account.get("gmail_password_env"))
+    if provider == "mailosaur":
+        return get_mailosaur_code(email, subject, send_code)
+    pytest.fail("mail_provider 只支持 gmail 或 mailosaur", pytrace=False)
 
 
 def login_with_privy_identity_token(api_client, identity_token):

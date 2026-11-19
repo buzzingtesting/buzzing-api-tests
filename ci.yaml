@@ -1,8 +1,9 @@
-testdata1:
+tester1:
   environment: preview
   email: ddjking998@gmail.com
   mail_subject: Your login code for Buzzing_dev
   mail_provider: gmail
+  gmail_password_env: BUZZING_GMAIL_APP_PASSWORD
   expected_session_status: 200
   expected_auth_levels: [1, 2]
 

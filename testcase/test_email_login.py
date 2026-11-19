@@ -18,7 +18,6 @@ MODULE_NAME = "身份与登录"
 @pytest.mark.pro
 def test_email_login(api_client, test_account):
     case_name, account = test_account
-    allure.dynamic.parameter("testdata", case_name)
     email = account["email"]
 
     with create_privy_client() as privy:

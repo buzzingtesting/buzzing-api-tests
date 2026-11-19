@@ -10,7 +10,7 @@ PROJECT_NAME = "Buzzing 接口自动化"
 
 def write_report_environment(results_dir, *, environment, base_url, data_group):
     (results_dir / "environment.properties").write_text(
-        f"Environment={environment}\nAPI.Base.URL={base_url}\nTest.data={data_group}\n",
+        f"Environment={environment}\nAPI.Base.URL={base_url}\nDefault.test.account={data_group}\n",
         encoding="utf-8",
     )
 

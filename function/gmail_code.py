@@ -102,9 +102,19 @@ def wait_for_code(mailbox, first_uid, email_address, subject, *, timeout=90):
     raise RuntimeError("等待本轮验证码邮件超时，请检查收件箱和 YAML 中的邮件标题")
 
 
-def get_app_password(email):
+def get_app_password(email, *, password_env=None):
     environment = get_environment()
-    variable = "BUZZING_PROD_GMAIL_APP_PASSWORD" if environment == "prod" else "BUZZING_GMAIL_APP_PASSWORD"
+    default_variable = (
+        "BUZZING_PROD_GMAIL_APP_PASSWORD" if environment == "prod"
+        else "BUZZING_GMAIL_APP_PASSWORD"
+    )
+    variable = password_env or default_variable
+    if not isinstance(variable, str) or (
+        variable != default_variable and not variable.startswith(f"{default_variable}_")
+    ):
+        raise ValueError(
+            f"gmail_password_env 必须匹配 {default_variable} 或以 {default_variable}_ 开头"
+        )
     app_password = os.getenv(variable, "")
     if not app_password and environment == "preview" and GMAIL_PASSWORD_FILE.is_file():
         saved_email, _, saved_password = GMAIL_PASSWORD_FILE.read_text(
@@ -120,8 +130,8 @@ def get_app_password(email):
     return app_password
 
 
-def get_gmail_code(email, subject, send_code):
-    with open_gmail(email, get_app_password(email)) as inbox:
+def get_gmail_code(email, subject, send_code, *, password_env=None):
+    with open_gmail(email, get_app_password(email, password_env=password_env)) as inbox:
         first_uid = next_mail_uid(inbox)
         send_code()
         return wait_for_code(inbox, first_uid, email, subject)
