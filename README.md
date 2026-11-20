@@ -4,8 +4,8 @@
 |---|---|
 | `function/` | 维护接口调用和可复用的方法。登录、取码和查会话从 `identity.py` 开始看。 |
 | `testcase/` | 维护 CI 要跑的场景。一个 `test_*.py` 可以包含同一业务下的多个场景。共享 fixture 放在 `conftest.py`。 |
-| `ci.yaml` | 维护测试账号，包括邮箱、收件方式和会话预期。 |
-| `.github/workflows/check-framework.yml` | 配置 GitHub Actions 的触发时间、运行环境和报告邮件。 |
+| [`ci.yaml`](ci.yaml) | 维护测试账号，包括邮箱、收件方式和会话预期。 |
+| [`check-framework.yml`](.github/workflows/check-framework.yml) | 配置 GitHub Actions 的定时计划、运行环境和报告通知。 |
 | `run.py` | 运行 `testcase/` 并生成报告。 |
 
 ## 本地运行
@@ -46,24 +46,33 @@ Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。现有 
 
 生产运行只选中标记为 `@pytest.mark.pro` 的用例。生产客户端允许 GET、HEAD 和明确的 `POST /api/v1/login`。登录通过 Privy 验码获得本环境的新身份凭证。
 
-## 报告和个人 GitHub CI
+## GitHub Actions 运行计划
 
-本轮结果保存到 `reports/run-*`。本机安装 Allure CLI 时，打开固定入口 `reports/allure-report/index.html` 可看最新一轮。概览里的 **环境** 显示当前环境、API 地址和默认账号，历史报告在各轮目录里。
+**定时执行**在 [`check-framework.yml`](.github/workflows/check-framework.yml) 的 `on.schedule` 维护。当前为 `0 9 * * *`，时区为 `Asia/Shanghai`，每天北京时间 **09:00** 计划触发 Preview 场景。修改后提交到默认分支 `main`。
 
-本项目可以独立放在个人 GitHub 的私有仓库中。首次在 **Actions → Buzzing API scenarios → Run workflow** 验证时，选择 `preview` 并保留默认勾选的 **Only verify API access**。这次只跑只读预检，可以直接下载 **preview-scenarios** 产物里的 `api-access.log`，用于核对 Runner 的 HTTPX 连通性。
+**手动执行**在 [Actions → Buzzing API scenarios](https://github.com/neoding001/buzzing-api-tests/actions/workflows/check-framework.yml) 点击 **Run workflow**，选择环境。保留 **Only verify API access** 会执行只读预检，取消勾选会继续执行场景并生成报告。
 
-CI 默认用 GitHub 托管的 `ubuntu-latest`。使用自有 Runner 时，可用仓库变量 `BUZZING_RUNNER_LABEL` 指定标签。每天北京时间 09:00 自动运行 Preview 场景。手动运行场景时，选择环境并取消勾选 **Only verify API access**。
+CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LABEL` 可指定 Runner 标签。Preview CI 默认从公司邮箱取验证码，使用 `ci.yaml` 中的 `ci_tester`。仓库变量 `BUZZING_PREVIEW_TESTDATA` 可切换 Preview CI 使用的账号。
 
-Preview 场景结束后会发送邮件，包含本轮结果、GitHub Actions 运行链接和 Allure HTML 的下载链接。登录有仓库访问权限的 GitHub 账号下载，解压后打开 `index.html`。测试失败时同样发送，若未能生成 HTML，邮件会提供运行链接。
+## 查看报告和通知
 
-配置仓库 Secret `LARK_WEBHOOK_URL` 后，Preview 场景结束时也会向 Lark 群发送通过、失败、错误和跳过数，以及 Allure 和 Actions 链接。机器人开启签名校验时，再配置 `LARK_SIGNING_SECRET`。打开报告仍需要私有仓库访问权限。
+- **本地**。每轮结果保存在 `reports/run-*`。本机安装 Allure CLI 后，可用浏览器打开 `reports/allure-report/index.html` 查看最新一轮。概览显示当前环境、API 地址和默认账号。
+- **GitHub Actions**。打开运行记录的 **Artifacts**，下载 `preview-allure-report`，解压后在浏览器打开 `index.html`。预检日志、JUnit 和场景日志在 `preview-scenarios` 中。下载需要登录有私有仓库访问权限的 GitHub 账号。
+- **邮件**。完整 Preview 场景结束后，由 `BUZZING_REPORT_FROM` 指定的 Gmail 向 `BUZZING_REPORT_TO` 发送结果及报告链接。若收件箱没有邮件，可先检查运行记录的 **Email the Preview report** 步骤和收件邮箱的垃圾邮件。
+- **Lark**。完整 Preview 场景结束后，机器人向测试群发送用例总数、通过、失败、错误和跳过数，并附上 Allure 和 Actions 链接。排查推送时查看 **Post the Preview report to Lark** 步骤。
 
-在仓库的 **Settings → Secrets and variables → Actions** 中配置以下值。
+Preview 测试失败也会发送通知。未生成 Allure HTML 时，可通过通知中的 Actions 链接查看运行日志。[公司邮箱登录和 Lark 推送验证记录](https://github.com/neoding001/buzzing-api-tests/actions/runs/44656063723)
 
-| 环境 | YAML 数据组 | 仓库 Variables | 仓库 Secrets |
-|---|---|---|---|
-| Preview CI 默认 | `ci_tester` | `BUZZING_REPORT_FROM`、`BUZZING_REPORT_TO` | `BUZZING_GMAIL_APP_PASSWORD_CI` 用于公司邮箱取码，`BUZZING_GMAIL_APP_PASSWORD` 用于发报告 |
-| Preview 改用 Mailosaur 取码 | `testdata2` | `BUZZING_PREVIEW_TESTDATA=testdata2`、`MAILOSAUR_SERVER_ID` | `MAILOSAUR_API_KEY`，发送报告仍用 Gmail 的 Secret |
-| Prod | `prod_testdata` | `PROD_MAILOSAUR_SERVER_ID`、`BUZZING_PROD_PRIVY_APP_ID`、按需设置 `BUZZING_PROD_PRIVY_CLIENT_ID` | `PROD_MAILOSAUR_API_KEY` |
+## CI 变量和凭证
+
+在仓库的 **Settings → Secrets and variables → Actions** 管理。密码、Webhook 和签名密钥填入 **Secrets**。
+
+| 用途 | 仓库 Variables | 仓库 Secrets |
+|---|---|---|
+| Preview CI 登录 `ci_tester` | 默认读取 `ci.yaml` 的 `ci_tester` | `BUZZING_GMAIL_APP_PASSWORD_CI` |
+| 报告邮件 | `BUZZING_REPORT_FROM`、`BUZZING_REPORT_TO` | `BUZZING_GMAIL_APP_PASSWORD` |
+| Lark 群推送 | 无 | `LARK_WEBHOOK_URL`，开启签名校验时另加 `LARK_SIGNING_SECRET` |
+| Preview 改用 Mailosaur 取码 | `BUZZING_PREVIEW_TESTDATA=testdata2`、`MAILOSAUR_SERVER_ID` | `MAILOSAUR_API_KEY` |
+| Prod | `PROD_MAILOSAUR_SERVER_ID`、`BUZZING_PROD_PRIVY_APP_ID`、按需设置 `BUZZING_PROD_PRIVY_CLIENT_ID` | `PROD_MAILOSAUR_API_KEY`，改用 Gmail 取码时配置 `BUZZING_PROD_GMAIL_APP_PASSWORD` |
 
 本地用同一个入口预检，运行 `.venv/bin/python -m function.preview_access`。HTTPX 使用默认 User-Agent、8 秒超时、关闭自动重定向。预检覆盖匿名会话、包装响应成功码和未登录拒绝码。
