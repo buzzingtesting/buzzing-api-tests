@@ -57,9 +57,9 @@ CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LAB
 ## 查看报告和通知
 
 - **本地**。每轮结果保存在 `reports/run-*`。本机安装 Allure CLI 后，可用浏览器打开 `reports/allure-report/index.html` 查看最新一轮。概览显示当前环境、API 地址和默认账号。
-- **GitHub Actions**。打开运行记录的 **Artifacts**，下载 `preview-allure-report`，解压后在浏览器打开 `index.html`。预检日志、JUnit 和场景日志在 `preview-scenarios` 中。下载需要登录有私有仓库访问权限的 GitHub 账号。
+- **GitHub Actions**。打开运行记录的 **Summary** 在线查看用例、结果和耗时。完整 Allure 从 **Artifacts** 的 `preview-allure-report` 下载，解压后在浏览器打开 `index.html`。预检日志、JUnit 和场景日志在 `preview-scenarios` 中。在线查看和下载都需要私有仓库访问权限。
 - **邮件**。完整 Preview 场景结束后，由 `BUZZING_REPORT_FROM` 指定的 Gmail 向 `BUZZING_REPORT_TO` 发送结果及报告链接。若收件箱没有邮件，可先检查运行记录的 **Email the Preview report** 步骤和收件邮箱的垃圾邮件。
-- **Lark**。完整 Preview 场景结束后，机器人向测试群发送用例总数、通过、失败、错误和跳过数，并附上 Allure 和 Actions 链接。排查推送时查看 **Post the Preview report to Lark** 步骤。
+- **Lark**。完整 Preview 场景结束后，机器人向测试群发送用例总数、通过、失败、错误和跳过数。点击 **在线查看测试结果** 直接打开本次 Actions 摘要，或点击 **下载完整 Allure** 查看完整报告。排查推送时查看 **Post the Preview report to Lark** 步骤。
 
 Preview 测试失败也会发送通知。未生成 Allure HTML 时，可通过通知中的 Actions 链接查看运行日志。[公司邮箱登录和 Lark 推送验证记录](https://github.com/neoding001/buzzing-api-tests/actions/runs/44656063723)
 
