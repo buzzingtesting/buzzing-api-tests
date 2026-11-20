@@ -50,7 +50,7 @@ Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。现有 
 
 **定时执行**在 [`check-framework.yml`](.github/workflows/check-framework.yml) 的 `on.schedule` 维护。当前为 `0 9 * * *`，时区为 `Asia/Shanghai`，每天北京时间 **09:00** 计划触发 Preview 场景。修改后提交到默认分支 `main`。
 
-**手动执行**在 [Actions → Buzzing API scenarios](https://github.com/neoding001/buzzing-api-tests/actions/workflows/check-framework.yml) 点击 **Run workflow**，选择环境。保留 **Only verify API access** 会执行只读预检，取消勾选会继续执行场景并生成报告。
+**手动执行**在 [Actions → Buzzing API scenarios](https://github.com/buzzingtesting/buzzing-api-tests/actions/workflows/check-framework.yml) 点击 **Run workflow**，选择环境。保留 **Only verify API access** 会执行只读预检，取消勾选会继续执行场景并生成报告。
 
 CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LABEL` 可指定 Runner 标签。Preview CI 默认从公司邮箱取验证码，使用 `ci.yaml` 中的 `ci_tester`。仓库变量 `BUZZING_PREVIEW_TESTDATA` 可切换 Preview CI 使用的账号。
 
@@ -58,10 +58,10 @@ CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LAB
 
 - **本地**。每轮结果保存在 `reports/run-*`。本机安装 Allure CLI 后，可用浏览器打开 `reports/allure-report/index.html` 查看最新一轮。概览显示当前环境、API 地址和默认账号。
 - **GitHub Actions**。打开运行记录的 **Artifacts**，下载 `preview-allure-report`，解压后在浏览器打开 `index.html`。预检日志、JUnit 和场景日志在 `preview-scenarios` 中。下载需要登录有私有仓库访问权限的 GitHub 账号。
-- **邮件**。完整 Preview 场景结束后，由 `BUZZING_REPORT_FROM` 指定的 Gmail 向 `BUZZING_REPORT_TO` 发送结果及报告链接。若收件箱没有邮件，可先检查运行记录的 **Email the Preview report** 步骤和收件邮箱的垃圾邮件。
+- **邮件**。完整 Preview 场景结束后，公司邮箱 `dejian.ding@trufflelabs.ai` 向 `BUZZING_REPORT_TO` 指定的地址发送结果及报告链接。仓库变量 `BUZZING_REPORT_FROM` 保存发件地址。若收件箱没有邮件，可先检查运行记录的 **Email the Preview report** 步骤和收件邮箱的垃圾邮件。
 - **Lark**。完整 Preview 场景结束后，机器人向测试群发送用例总数、通过、失败、错误和跳过数，并附上 Allure 和 Actions 链接。排查推送时查看 **Post the Preview report to Lark** 步骤。
 
-Preview 测试失败也会发送通知。未生成 Allure HTML 时，可通过通知中的 Actions 链接查看运行日志。[公司邮箱登录和 Lark 推送验证记录](https://github.com/neoding001/buzzing-api-tests/actions/runs/44656063723)
+Preview 测试失败也会发送通知。未生成 Allure HTML 时，可通过通知中的 Actions 链接查看运行日志。[组织仓库 CI 验证记录](https://github.com/buzzingtesting/buzzing-api-tests/actions/runs/44660760957)
 
 ## CI 变量和凭证
 
@@ -70,7 +70,7 @@ Preview 测试失败也会发送通知。未生成 Allure HTML 时，可通过�
 | 用途 | 仓库 Variables | 仓库 Secrets |
 |---|---|---|
 | Preview CI 登录 `ci_tester` | 默认读取 `ci.yaml` 的 `ci_tester` | `BUZZING_GMAIL_APP_PASSWORD_CI` |
-| 报告邮件 | `BUZZING_REPORT_FROM`、`BUZZING_REPORT_TO` | `BUZZING_GMAIL_APP_PASSWORD` |
+| 报告邮件 | `BUZZING_REPORT_FROM`、`BUZZING_REPORT_TO` | `BUZZING_GMAIL_APP_PASSWORD_CI` |
 | Lark 群推送 | 无 | `LARK_WEBHOOK_URL`，开启签名校验时另加 `LARK_SIGNING_SECRET` |
 | Preview 改用 Mailosaur 取码 | `BUZZING_PREVIEW_TESTDATA=testdata2`、`MAILOSAUR_SERVER_ID` | `MAILOSAUR_API_KEY` |
 | Prod | `PROD_MAILOSAUR_SERVER_ID`、`BUZZING_PROD_PRIVY_APP_ID`、按需设置 `BUZZING_PROD_PRIVY_CLIENT_ID` | `PROD_MAILOSAUR_API_KEY`，改用 Gmail 取码时配置 `BUZZING_PROD_GMAIL_APP_PASSWORD` |

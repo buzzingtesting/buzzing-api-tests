@@ -95,7 +95,7 @@ jobs:
       - name: Email the Preview report
         if: ${{ !cancelled() && !inputs.access_only && env.BUZZING_ENV == 'preview' }}
         env:
-          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
+          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD_CI }}
           BUZZING_REPORT_FROM: ${{ vars.BUZZING_REPORT_FROM }}
           BUZZING_REPORT_TO: ${{ vars.BUZZING_REPORT_TO }}
           REPORT_OUTCOME: ${{ steps.scenario_tests.outcome }}
