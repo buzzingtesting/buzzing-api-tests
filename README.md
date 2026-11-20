@@ -1,5 +1,7 @@
 # Buzzing 接口自动化
 
+[GitHub 仓库 buzzingtesting/buzzing-api-tests](https://github.com/buzzingtesting/buzzing-api-tests)
+
 | 目录或文件 | 日常怎么用 |
 |---|---|
 | `function/` | 维护接口调用和可复用的方法。登录、取码和查会话从 `identity.py` 开始看。 |
@@ -10,7 +12,7 @@
 
 ## 本地运行
 
-在 PyCharm 右键运行 `run.py`，或在项目 Terminal 执行：
+在 PyCharm 右键运行 `run.py`，也可以在项目根目录的 Terminal 执行以下命令。
 
 ```sh
 .venv/bin/python run.py
@@ -19,20 +21,51 @@
 
 项目首次安装依赖时运行 `.venv/bin/python -m pip install -r requirements.txt`。在 PyCharm 运行配置的参数中填写 `--env prod` 可切换到生产，也可以设置 `BUZZING_ENV=prod`。命令行参数优先。
 
+## 新增和维护用例
+
+1. **找对应模块**。在 `testcase/` 中修改已有的 `test_*.py`，新模块可以新建 `test_<模块>.py`。用例函数以 `test_` 开头。登录流程可参考 [邮箱验证码登录用例](testcase/test_email_login.py)。
+2. **复用接口调用和 fixture**。公共请求使用 [`function/api_client.py`](function/api_client.py) 中的 `request()`。可复用的业务接口方法放在 `function/`，账号和客户端 fixture 放在 [`testcase/conftest.py`](testcase/conftest.py)。匿名场景用 `api_client`，已登录场景用 `authenticated_api_client`。
+3. **按接口契约写断言**。原生 JSON 用 `expect_native()` 检查 HTTP 状态和 schema，包装响应 `EnvelopeReply` 用 `expect_envelope()` 检查 HTTP 状态和业务码。用 `allure.title` 和 `allure.step` 写清场景名称和业务步骤。 [响应校验方法](function/response_checks.py)
+4. **在 Preview 验证**。先单跑修改的用例，再用 `run.py --env preview` 跑完整场景并查看 Allure。用例合入 `main` 后，由现有工作流在下次定时运行时收集。需参加生产回归的用例按下方生产回归规则添加标记。
+
+下面是一个已登录用户查询会话的用例示例。它复用现有会话接口，并用 `ci.yaml` 中选定账号的预期校验响应。
+
+```python
+import allure
+
+from function.identity import get_session
+from function.response_checks import expect_native
+
+
+@allure.title("已登录用户可查询会话")
+def test_authenticated_session(authenticated_api_client, test_account):
+    _, account = test_account
+    with allure.step("查询并校验会话权限"):
+        response = get_session(authenticated_api_client)
+        expect_native(
+            response,
+            status=account["expected_session_status"],
+            schema={
+                "type": "object",
+                "required": ["auth_level"],
+                "properties": {
+                    "auth_level": {"type": "integer", "enum": account["expected_auth_levels"]},
+                },
+            },
+        )
+```
+
+**单跑现有用例**时，可以在 PyCharm 点击函数旁的运行按钮，或用以下命令查看结果。生成整套 Allure 报告时使用 `run.py --env preview`。
+
+```sh
+BUZZING_ENV=preview .venv/bin/python -m pytest testcase/test_email_login.py::test_email_login -v
+```
+
 ## 按场景选择测试账号
 
 在根目录 `ci.yaml` 维护账号。本地 Preview 默认使用 `tester1`，也就是 `ddjking998@gmail.com`。GitHub Actions 的 Preview 默认使用 `ci_tester`，也就是公司邮箱。新增账号时，复制 `tester1` 的 YAML 配置，改名为 `tester2`，再填写真实的测试邮箱和对应的收件配置。
 
-某个场景固定使用 `tester2` 时，在现有测试函数上加这行。函数使用 `authenticated_api_client` 时，客户端会自动用该账号登录。
-
-```python
-@pytest.mark.parametrize("test_account", ["tester2"], indirect=True)
-def test_my_scenario(authenticated_api_client):
-    # 调用接口，断言业务结果。
-    ...
-```
-
-同一场景要用两个账号分别跑，将列表写成 `["tester1", "tester2"]`。未指定账号的场景使用当前环境的默认账号。临时改变默认账号可设置 `BUZZING_TESTDATA`。Allure 会在每条使用账号的用例中显示实际账号名。
+两人共用一条场景时，可在各自的 PyCharm 运行配置里设置 `BUZZING_TESTDATA`，值填写本人在 `ci.yaml` 中的账号名。场景需要固定用 `tester2` 时，导入 `pytest` 并在测试函数上加 `@pytest.mark.parametrize("test_account", ["tester2"], indirect=True)`。同一场景要用两个账号分别验证时，把列表写成 `["tester1", "tester2"]`。Allure 会显示实际使用的账号名。
 
 Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。现有 `tester1` 继续用 `BUZZING_GMAIL_APP_PASSWORD`，本机也可以读 `.local/gmail_app_password`。例如 Preview 新账号可用 `BUZZING_GMAIL_APP_PASSWORD_TESTER2`。在 PyCharm 的运行配置中设置它，或在 GitHub Actions 新增同名 Secret，并在工作流的 **Run scenario tests** 步骤把它传入同名环境变量。Mailosaur 使用 `MAILOSAUR_SERVER_ID` 和 `MAILOSAUR_API_KEY`。
 
