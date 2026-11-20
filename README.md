@@ -56,6 +56,8 @@ CI 默认用 GitHub 托管的 `ubuntu-latest`。使用自有 Runner 时，可用
 
 Preview 场景结束后会发送邮件，包含本轮结果、GitHub Actions 运行链接和 Allure HTML 的下载链接。登录有仓库访问权限的 GitHub 账号下载，解压后打开 `index.html`。测试失败时同样发送，若未能生成 HTML，邮件会提供运行链接。
 
+配置仓库 Secret `LARK_WEBHOOK_URL` 后，Preview 场景结束时也会向 Lark 群发送通过、失败、错误和跳过数，以及 Allure 和 Actions 链接。机器人开启签名校验时，再配置 `LARK_SIGNING_SECRET`。打开报告仍需要私有仓库访问权限。
+
 在仓库的 **Settings → Secrets and variables → Actions** 中配置以下值。
 
 | 环境 | YAML 数据组 | 仓库 Variables | 仓库 Secrets |

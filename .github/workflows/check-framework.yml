@@ -100,3 +100,11 @@ jobs:
           REPORT_OUTCOME: ${{ steps.scenario_tests.outcome }}
           REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
         run: python -m function.email_report
+      - name: Post the Preview report to Lark
+        if: ${{ !cancelled() && !inputs.access_only && env.BUZZING_ENV == 'preview' }}
+        env:
+          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+          LARK_SIGNING_SECRET: ${{ secrets.LARK_SIGNING_SECRET }}
+          REPORT_OUTCOME: ${{ steps.scenario_tests.outcome }}
+          REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
+        run: python -m function.lark_report
