@@ -7,6 +7,15 @@ tester1:
   expected_session_status: 200
   expected_auth_levels: [1, 2]
 
+ci_tester:
+  environment: preview
+  email: dejian.ding@trufflelabs.ai
+  mail_subject: Your login code for Buzzing_dev
+  mail_provider: gmail
+  gmail_password_env: BUZZING_GMAIL_APP_PASSWORD_CI
+  expected_session_status: 200
+  expected_auth_levels: [1, 2]
+
 testdata2:
   environment: preview
   email: "ddjking998@gmail.com"  # 填已在 Preview 建好的 Mailosaur 测试账号邮箱

@@ -63,8 +63,9 @@ jobs:
         id: scenario_tests
         if: ${{ !inputs.access_only }}
         env:
-          BUZZING_TESTDATA: ${{ env.BUZZING_ENV == 'prod' && 'prod_testdata' || vars.BUZZING_PREVIEW_TESTDATA || 'tester1' }}
+          BUZZING_TESTDATA: ${{ env.BUZZING_ENV == 'prod' && 'prod_testdata' || vars.BUZZING_PREVIEW_TESTDATA || 'ci_tester' }}
           BUZZING_GMAIL_APP_PASSWORD: ${{ env.BUZZING_ENV == 'preview' && secrets.BUZZING_GMAIL_APP_PASSWORD || '' }}
+          BUZZING_GMAIL_APP_PASSWORD_CI: ${{ env.BUZZING_ENV == 'preview' && secrets.BUZZING_GMAIL_APP_PASSWORD_CI || '' }}
           BUZZING_PROD_GMAIL_APP_PASSWORD: ${{ env.BUZZING_ENV == 'prod' && secrets.BUZZING_PROD_GMAIL_APP_PASSWORD || '' }}
           MAILOSAUR_SERVER_ID: ${{ env.BUZZING_ENV == 'preview' && vars.MAILOSAUR_SERVER_ID || '' }}
           MAILOSAUR_API_KEY: ${{ env.BUZZING_ENV == 'preview' && secrets.MAILOSAUR_API_KEY || '' }}

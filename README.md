@@ -21,7 +21,7 @@
 
 ## 按场景选择测试账号
 
-在根目录 `ci.yaml` 维护账号。Preview 默认使用 `tester1`，也就是 `ddjking998@gmail.com`。新增账号时，复制 `tester1` 的 YAML 配置，改名为 `tester2`，再填写真实的测试邮箱和对应的收件配置。
+在根目录 `ci.yaml` 维护账号。本地 Preview 默认使用 `tester1`，也就是 `ddjking998@gmail.com`。GitHub Actions 的 Preview 默认使用 `ci_tester`，也就是公司邮箱。新增账号时，复制 `tester1` 的 YAML 配置，改名为 `tester2`，再填写真实的测试邮箱和对应的收件配置。
 
 某个场景固定使用 `tester2` 时，在现有测试函数上加这行。函数使用 `authenticated_api_client` 时，客户端会自动用该账号登录。
 
@@ -62,7 +62,7 @@ Preview 场景结束后会发送邮件，包含本轮结果、GitHub Actions 运
 
 | 环境 | YAML 数据组 | 仓库 Variables | 仓库 Secrets |
 |---|---|---|---|
-| Preview 默认 | `tester1` | `BUZZING_REPORT_FROM`、`BUZZING_REPORT_TO` | `BUZZING_GMAIL_APP_PASSWORD`，用于 Gmail 取码和发报告 |
+| Preview CI 默认 | `ci_tester` | `BUZZING_REPORT_FROM`、`BUZZING_REPORT_TO` | `BUZZING_GMAIL_APP_PASSWORD_CI` 用于公司邮箱取码，`BUZZING_GMAIL_APP_PASSWORD` 用于发报告 |
 | Preview 改用 Mailosaur 取码 | `testdata2` | `BUZZING_PREVIEW_TESTDATA=testdata2`、`MAILOSAUR_SERVER_ID` | `MAILOSAUR_API_KEY`，发送报告仍用 Gmail 的 Secret |
 | Prod | `prod_testdata` | `PROD_MAILOSAUR_SERVER_ID`、`BUZZING_PROD_PRIVY_APP_ID`、按需设置 `BUZZING_PROD_PRIVY_CLIENT_ID` | `PROD_MAILOSAUR_API_KEY` |
 
