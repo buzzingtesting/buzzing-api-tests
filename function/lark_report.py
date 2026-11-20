@@ -6,17 +6,33 @@ import os
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
+from xml.etree import ElementTree
 
 import httpx
 
-from function.ci_report import read_junit_results, result_totals
-
 
 def junit_summary(reports_dir):
-    results = read_junit_results(reports_dir)
-    if not results:
+    files = list(reports_dir.glob("run-*/junit.xml"))
+    if not files:
         return "本轮暂无用例统计，请查看 Actions 日志。"
-    return f"**用例 {len(results)} 条**\n{result_totals(results)}"
+
+    junit_file = max(files, key=lambda path: path.stat().st_mtime_ns)
+    try:
+        root = ElementTree.parse(junit_file).getroot()
+    except (OSError, ElementTree.ParseError):
+        return "本轮 JUnit 报告无法读取，请查看 Actions 日志。"
+
+    outcomes = ("error", "failure", "skipped")
+    counts = dict.fromkeys((*outcomes, "passed"), 0)
+    for test in root.iter("testcase"):
+        result = next((tag for tag in outcomes if test.find(tag) is not None), "passed")
+        counts[result] += 1
+
+    return (
+        f"**用例 {sum(counts.values())} 条**\n"
+        f"通过 {counts['passed']} · 失败 {counts['failure']} · "
+        f"错误 {counts['error']} · 跳过 {counts['skipped']}"
+    )
 
 
 def build_card(summary, outcome, run_url, report_url):
@@ -24,9 +40,7 @@ def build_card(summary, outcome, run_url, report_url):
         "success": ("通过", "green"),
         "failure": ("失败", "red"),
     }.get(outcome, ("场景未执行", "grey"))
-    links = f"[在线查看测试结果]({run_url})"
-    if report_url:
-        links += f" · [下载完整 Allure]({report_url})"
+    report = f"[下载 Allure 报告]({report_url})" if report_url else "本轮暂无 Allure 报告"
     return {
         "msg_type": "interactive",
         "card": {
@@ -38,7 +52,7 @@ def build_card(summary, outcome, run_url, report_url):
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
-                    "content": f"{summary}\n\n{links}",
+                    "content": f"{summary}\n\n{report} · [查看 Actions 运行]({run_url})",
                 },
             }],
         },

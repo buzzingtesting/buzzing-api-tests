@@ -92,12 +92,6 @@ jobs:
           path: |
             reports/api-access.log
             reports/run-*/
-      - name: Write online test results
-        if: ${{ !cancelled() && !inputs.access_only }}
-        env:
-          REPORT_OUTCOME: ${{ steps.scenario_tests.outcome }}
-          REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
-        run: python -m function.ci_report
       - name: Email the Preview report
         if: ${{ !cancelled() && !inputs.access_only && env.BUZZING_ENV == 'preview' }}
         env:
