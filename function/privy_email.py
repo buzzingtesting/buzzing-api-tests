@@ -51,21 +51,58 @@ def send_email_code(client, email):
     )
 
 
-def verify_email_code(client, email, code):
-    response = request(
+def submit_email_code(client, email, code):
+    return request(
         client,
         "POST",
         "/api/v1/passwordless/authenticate",
         operation="privy_verify_email_code",
         json={"email": email, "code": code, "mode": "no-signup"},
     )
-    session = expect_native(
+
+
+def verify_email_code(client, email, code):
+    response = submit_email_code(client, email, code)
+    return expect_native(
         response,
         status=200,
         schema={
             "type": "object",
-            "required": ["identity_token"],
-            "properties": {"identity_token": {"type": "string", "minLength": 1}},
+            "required": ["token", "identity_token", "user"],
+            "properties": {
+                "token": {"type": "string", "minLength": 1},
+                "identity_token": {"type": "string", "minLength": 1},
+                "user": {
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {"id": {"type": "string", "minLength": 1}},
+                },
+            },
         },
     )
-    return session["identity_token"]
+
+
+def verify_privy_user(client, session):
+    """使用本轮 Access Token 查询 Privy 用户并核对用户 ID。"""
+    response = request(
+        client,
+        "GET",
+        "/api/v1/users/me",
+        operation="privy_current_user",
+        headers={"Authorization": f"Bearer {session['token']}"},
+    )
+    expect_native(
+        response,
+        status=200,
+        schema={
+            "type": "object",
+            "required": ["user"],
+            "properties": {
+                "user": {
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {"id": {"const": session["user"]["id"]}},
+                },
+            },
+        },
+    )

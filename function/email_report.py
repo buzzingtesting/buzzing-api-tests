@@ -2,6 +2,9 @@ import os
 import smtplib
 import ssl
 from email.message import EmailMessage
+from pathlib import Path
+
+from function.reporting import junit_summary
 
 
 def main():
@@ -28,7 +31,8 @@ def main():
     message["From"] = sender
     message["To"] = recipient
     message["Subject"] = f"[Buzzing Preview] 接口自动化 {outcome}"
-    message.set_content(f"测试结果 {outcome}\n\n{report_line}\n\n运行记录\n{run_url}\n")
+    summary = junit_summary(Path("reports"))
+    message.set_content(f"测试结果 {outcome}\n{summary}\n\n{report_line}\n\n运行记录\n{run_url}\n")
 
     try:
         with smtplib.SMTP_SSL(

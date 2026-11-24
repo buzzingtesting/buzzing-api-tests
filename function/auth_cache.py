@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,7 +9,8 @@ import yaml
 from function.settings import get_environment
 
 
-TOKEN_DIR = Path(__file__).resolve().parents[1] / ".local"
+LOCAL_TOKEN_DIR = Path(__file__).resolve().parents[1] / ".local"
+TOKEN_DIR = Path(os.getenv("BUZZING_AUTH_CACHE_DIR") or LOCAL_TOKEN_DIR)
 
 
 class CachedLoginUnavailable(RuntimeError):

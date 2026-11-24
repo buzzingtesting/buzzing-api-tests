@@ -6,7 +6,7 @@
 |---|---|
 | `function/` | 维护接口调用和可复用的方法。登录、取码和查会话从 `identity.py` 开始看。 |
 | `testcase/` | 维护 CI 要跑的场景。一个 `test_*.py` 可以包含同一业务下的多个场景。共享 fixture 放在 `conftest.py`。 |
-| [`ci.yaml`](ci.yaml) | 维护测试账号，包括邮箱、收件方式和会话预期。 |
+| [`ci.yaml`](ci.yaml) | 维护测试账号和市场场景参数。 |
 | [`check-framework.yml`](.github/workflows/check-framework.yml) | 配置 GitHub Actions 的定时计划、运行环境和报告通知。 |
 | `run.py` | 运行 `testcase/` 并生成报告。 |
 
@@ -23,10 +23,25 @@
 
 ## 新增和维护用例
 
+[A2 Preview 验收记录](docs/a2-acceptance.md)汇总本地测试、后端补验和接口契约。
+
 1. **找对应模块**。在 `testcase/` 中修改已有的 `test_*.py`，新模块可以新建 `test_<模块>.py`。用例函数以 `test_` 开头。登录流程可参考 [邮箱验证码登录用例](testcase/test_email_login.py)。
 2. **复用接口调用和 fixture**。公共请求使用 [`function/api_client.py`](function/api_client.py) 中的 `request()`。可复用的业务接口方法放在 `function/`，账号和客户端 fixture 放在 [`testcase/conftest.py`](testcase/conftest.py)。匿名场景用 `api_client`，已登录场景用 `authenticated_api_client`。
 3. **按接口契约写断言**。原生 JSON 用 `expect_native()` 检查 HTTP 状态和 schema，包装响应 `EnvelopeReply` 用 `expect_envelope()` 检查 HTTP 状态和业务码。用 `allure.title` 和 `allure.step` 写清场景名称和业务步骤。 [响应校验方法](function/response_checks.py)
 4. **在 Preview 验证**。先单跑修改的用例，再用 `run.py --env preview` 跑完整场景并查看 Allure。用例合入 `main` 后，由现有工作流在下次定时运行时收集。需参加生产回归的用例按下方生产回归规则添加标记。
+
+市场场景的筛选条件和查询参数在 [`ci.yaml`](ci.yaml) 的 `market_cases` 段维护。
+
+- [市场列表](testcase/test_market_list.py) 验证首页排序、游标分页、体育导航和电竞 Props。每种排序在 Allure 中独立显示，返回空列表时该场景失败。
+- [市场详情](testcase/test_market_detail.py) 通过参数化场景独立验证每种市场。每条用例从本轮列表选取有效样本，再用事件 ID 或比赛 ID 查询详情，核对列表和详情返回的对应字段。
+- [盘口与 Orderbook](testcase/test_market_orderbook.py) 从本轮列表取独立二元市场的事件 ID，校验 Orderbook 事件、子市场、选项和最优报价字段。深度用例从二元选项取 `position_id`。买卖盘可为空，返回档位时校验价格和数量。
+- [持仓查询](testcase/test_positions.py) 从登录会话取当前账号的 UID，分别查询未平和已关闭持仓，校验字段、分页及空列表。
+- [订单查询](testcase/test_orders.py) 查询当前账号的跨市场订单历史，校验订单归属、结束状态和游标分页。空历史可以通过。
+- [资金查询](testcase/test_funds.py) 用本轮 Orderbook 市场和选项查询当前账号的购买力，校验余额、购买力和反向选项。测试账号余额必须大于零，余额缺失时用例失败。
+
+市场详情和盘口用例在 Allure 的选样步骤附上「本轮选中市场」，记录事件标题和 ID，以及该场景使用的比赛或市场 ID。
+
+登录后进入市场详情会按所选子市场的 `condition_id` 和 `position_id` 查询本人持仓及在挂限价单。多子市场场景抽样一个子市场，持仓和挂单都允许为空，Allure 会记录数量。
 
 下面是一个已登录用户查询会话的用例示例。它复用现有会话接口，并用 `ci.yaml` 中选定账号的预期校验响应。
 
@@ -87,6 +102,8 @@ Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。现有 
 
 CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LABEL` 可指定 Runner 标签。Preview CI 默认从公司邮箱取验证码，使用 `ci.yaml` 中的 `ci_tester`。仓库变量 `BUZZING_PREVIEW_TESTDATA` 可切换 Preview CI 使用的账号。
 
+每轮 CI 从空的登录缓存开始，本轮 JWT 存在独立临时目录，场景执行结束时清理。CI 禁用 pytest 缓存，Allure、JUnit 和脱敏日志通过 Artifacts 查看。
+
 ## 查看报告和通知
 
 - **本地**。每轮结果保存在 `reports/run-*`。本机安装 Allure CLI 后，可用浏览器打开 `reports/allure-report/index.html` 查看最新一轮。概览显示当前环境、API 地址和默认账号。
@@ -94,7 +111,7 @@ CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LAB
 - **邮件**。完整 Preview 场景结束后，公司邮箱 `dejian.ding@trufflelabs.ai` 向 `BUZZING_REPORT_TO` 指定的地址发送结果及报告链接。仓库变量 `BUZZING_REPORT_FROM` 保存发件地址。若收件箱没有邮件，可先检查运行记录的 **Email the Preview report** 步骤和收件邮箱的垃圾邮件。
 - **Lark**。完整 Preview 场景结束后，机器人向测试群发送用例总数、通过、失败、错误和跳过数，并附上 Allure 和 Actions 链接。排查推送时查看 **Post the Preview report to Lark** 步骤。
 
-Preview 测试失败也会发送通知。未生成 Allure HTML 时，可通过通知中的 Actions 链接查看运行日志。[组织仓库 CI 验证记录](https://github.com/buzzingtesting/buzzing-api-tests/actions/runs/44660760957)
+用例失败时，CI 跑完并生成报告后仍显示成功。Allure、邮件和 Lark 保留用例失败数。预检、执行中断或报告生成出错时，CI 会显示失败，可通过 Actions 链接查看日志。[组织仓库 CI 验证记录](https://github.com/buzzingtesting/buzzing-api-tests/actions/runs/44660760957)
 
 ## CI 变量和凭证
 

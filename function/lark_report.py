@@ -6,33 +6,10 @@ import os
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
-from xml.etree import ElementTree
 
 import httpx
 
-
-def junit_summary(reports_dir):
-    files = list(reports_dir.glob("run-*/junit.xml"))
-    if not files:
-        return "本轮暂无用例统计，请查看 Actions 日志。"
-
-    junit_file = max(files, key=lambda path: path.stat().st_mtime_ns)
-    try:
-        root = ElementTree.parse(junit_file).getroot()
-    except (OSError, ElementTree.ParseError):
-        return "本轮 JUnit 报告无法读取，请查看 Actions 日志。"
-
-    outcomes = ("error", "failure", "skipped")
-    counts = dict.fromkeys((*outcomes, "passed"), 0)
-    for test in root.iter("testcase"):
-        result = next((tag for tag in outcomes if test.find(tag) is not None), "passed")
-        counts[result] += 1
-
-    return (
-        f"**用例 {sum(counts.values())} 条**\n"
-        f"通过 {counts['passed']} · 失败 {counts['failure']} · "
-        f"错误 {counts['error']} · 跳过 {counts['skipped']}"
-    )
+from function.reporting import junit_summary
 
 
 def build_card(summary, outcome, run_url, report_url):
@@ -79,7 +56,8 @@ def main():
     )
     outcome = os.getenv("REPORT_OUTCOME", "")
     payload = build_card(
-        junit_summary(Path("reports")) if outcome in {"success", "failure"} else "本轮暂无用例统计。",
+        junit_summary(Path("reports"), bold_total=True)
+        if outcome in {"success", "failure"} else "本轮暂无用例统计。",
         outcome, run_url, os.getenv("REPORT_ARTIFACT_URL", ""),
     )
 

@@ -31,3 +31,93 @@ prod_testdata:
   mail_provider: mailosaur
   expected_session_status: 200
   expected_auth_levels: [1, 2]
+
+market_cases:
+  home_list:
+    page_size: 30
+    sort_modes:
+      top_picks: Top Picks
+      newest: Newest
+      liquidity: Liquidity
+      volume: Volume
+      24hr_volume: 24hr Volume
+      end_soon: End Soon
+
+  esports_props:
+    league_slug: counter-strike
+    params:
+      page: 1
+      page_size: 20
+      market_filter: all
+      sort_by: volume_24h
+
+  btc_1h:
+    series_slug: btc-up-or-down-hourly
+    detail:
+      asset: BTC
+      cadence: 1h
+      archetype: up-or-down
+    min_markets: 1
+    outcome_labels: [Up, Down]
+
+  xrp_daily_hit_price:
+    series_slug: xrp-hit-price-daily
+    detail:
+      asset: XRP
+      cadence: daily
+      archetype: hit-price
+      detail_template: crypto_loop_ladder
+    min_markets: 2
+    outcome_labels: ["Yes", "No"]
+
+  ordinary_binary:
+    taxonomy_sport_slug: finance
+    list_params:
+      page_size: 30
+      sort_by: top_picks
+
+  non_exclusive_multi:
+    series_slug: tsla-multi-strikes-weekly
+    min_markets: 2
+    outcome_labels: ["Yes", "No"]
+
+  sports_match_blocks:
+    list_params:
+      page_size: 30
+      sort_by: top_picks
+    detail_params:
+      layout: blocks
+      blocks_version: 1
+      lang: en-US
+
+  orderbook_binary:
+    list_params:
+      page_size: 30
+      sort_by: top_picks
+    depth_source: orderbook
+
+  open_positions:
+    params:
+      state: open
+      source: all
+      page: 1
+      page_size: 20
+
+  closed_positions:
+    params:
+      source: all
+      page: 1
+      page_size: 20
+
+  order_history:
+    params:
+      view: history
+      source: all
+      page_size: 20
+    terminal_statuses: [filled, cancelled, canceled, expired, completed, failed, rejected]
+
+  market_account:
+    page: 1
+    page_size: 100
+    order_type: limit
+    open_order_statuses: [open, partial]

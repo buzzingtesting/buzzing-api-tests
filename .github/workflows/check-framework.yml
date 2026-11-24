@@ -62,7 +62,9 @@ jobs:
       - name: Run scenario tests
         id: scenario_tests
         if: ${{ !inputs.access_only }}
+        shell: bash
         env:
+          PYTEST_ADDOPTS: -p no:cacheprovider
           BUZZING_TESTDATA: ${{ env.BUZZING_ENV == 'prod' && 'prod_testdata' || vars.BUZZING_PREVIEW_TESTDATA || 'ci_tester' }}
           BUZZING_GMAIL_APP_PASSWORD: ${{ env.BUZZING_ENV == 'preview' && secrets.BUZZING_GMAIL_APP_PASSWORD || '' }}
           BUZZING_GMAIL_APP_PASSWORD_CI: ${{ env.BUZZING_ENV == 'preview' && secrets.BUZZING_GMAIL_APP_PASSWORD_CI || '' }}
@@ -75,7 +77,9 @@ jobs:
           BUZZING_PROD_PRIVY_CLIENT_ID: ${{ vars.BUZZING_PROD_PRIVY_CLIENT_ID }}
         run: |
           allure --version
-          python run.py
+          cache_dir="$(mktemp -d "$RUNNER_TEMP/buzzing-auth-XXXXXX")"
+          trap 'rm -rf -- "$cache_dir"' EXIT
+          BUZZING_AUTH_CACHE_DIR="$cache_dir" python run.py --allow-test-failures
       - name: Upload Allure HTML
         id: allure_report
         if: ${{ !cancelled() && steps.scenario_tests.outcome != 'skipped' && hashFiles('reports/allure-report/index.html') != '' }}
@@ -98,7 +102,7 @@ jobs:
           BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD_CI }}
           BUZZING_REPORT_FROM: ${{ vars.BUZZING_REPORT_FROM }}
           BUZZING_REPORT_TO: ${{ vars.BUZZING_REPORT_TO }}
-          REPORT_OUTCOME: ${{ steps.scenario_tests.outcome }}
+          REPORT_OUTCOME: ${{ steps.scenario_tests.outputs.test_outcome || steps.scenario_tests.outcome }}
           REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
         run: python -m function.email_report
       - name: Post the Preview report to Lark
@@ -106,6 +110,6 @@ jobs:
         env:
           LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
           LARK_SIGNING_SECRET: ${{ secrets.LARK_SIGNING_SECRET }}
-          REPORT_OUTCOME: ${{ steps.scenario_tests.outcome }}
+          REPORT_OUTCOME: ${{ steps.scenario_tests.outputs.test_outcome || steps.scenario_tests.outcome }}
           REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
         run: python -m function.lark_report

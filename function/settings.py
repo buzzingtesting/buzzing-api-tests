@@ -1,4 +1,7 @@
 import os
+from pathlib import Path
+
+import yaml
 
 
 BASE_URLS = {
@@ -10,6 +13,11 @@ WEB_ORIGINS = {
     "prod": "https://www.buzzing.app",
 }
 DEFAULT_TESTDATA = {"preview": "tester1", "prod": "prod_testdata"}
+DATA_FILE = Path(__file__).resolve().parents[1] / "ci.yaml"
+
+
+def load_test_data():
+    return yaml.safe_load(DATA_FILE.read_text(encoding="utf-8"))
 
 
 def get_environment():

@@ -1,24 +1,22 @@
-from pathlib import Path
-
 import allure
 import pytest
-import yaml
 
 from function.api_client import create_client
 from function.identity import get_test_jwt
-from function.settings import check_account_environment, get_testdata
-
-
-DATA_FILE = Path(__file__).resolve().parents[1] / "ci.yaml"
+from function.settings import check_account_environment, get_testdata, load_test_data
 
 
 @pytest.fixture
-def test_account(request):
+def test_data():
+    return load_test_data()
+
+
+@pytest.fixture
+def test_account(request, test_data):
     """优先使用场景指定的账号，否则使用当前环境的默认账号。"""
     account_name = get_testdata(getattr(request, "param", None))
-    data = yaml.safe_load(DATA_FILE.read_text(encoding="utf-8"))
-    account = data.get(account_name) if isinstance(data, dict) else None
-    if not isinstance(account, dict):
+    account = test_data.get(account_name) if isinstance(test_data, dict) else None
+    if not isinstance(account, dict) or account_name == "market_cases":
         pytest.fail(f"ci.yaml 中没有账号 {account_name}", pytrace=False)
     check_account_environment(account)
     allure.dynamic.parameter("测试账号", account_name)

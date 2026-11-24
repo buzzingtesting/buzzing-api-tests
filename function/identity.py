@@ -7,7 +7,12 @@ from function.api_client import LOGIN_PATH, create_client, request
 from function.auth_cache import CachedLoginUnavailable, load_buzzing_jwt, save_tokens
 from function.gmail_code import get_gmail_code
 from function.mailosaur_code import get_mailosaur_code
-from function.privy_email import create_privy_client, send_email_code, verify_email_code
+from function.privy_email import (
+    create_privy_client,
+    send_email_code,
+    verify_email_code,
+    verify_privy_user,
+)
 from function.response_checks import expect_native
 from function.settings import BASE_URLS, WEB_ORIGINS, check_account_environment, get_environment
 
@@ -66,6 +71,19 @@ def get_session(api_client):
     return request(api_client, "GET", "/api/v1/auth/session", operation="login_session")
 
 
+def get_session_user_id(api_client):
+    session = expect_native(
+        get_session(api_client),
+        status=200,
+        schema={
+            "type": "object",
+            "required": ["user_id"],
+            "properties": {"user_id": {"type": "string", "pattern": "^[1-9][0-9]*$"}},
+        },
+    )
+    return session["user_id"]
+
+
 def verify_login_session(login, account):
     with create_client(bearer_token=login["token"]) as client:
         response = get_session(client)
@@ -94,7 +112,9 @@ def get_test_jwt(case_name, account):
 
     with create_privy_client() as privy:
         code = request_email_code(privy, account)
-        identity_token = verify_email_code(privy, email, code)
+        privy_session = verify_email_code(privy, email, code)
+        verify_privy_user(privy, privy_session)
+    identity_token = privy_session["identity_token"]
     with create_client() as client:
         login = login_with_privy_identity_token(client, identity_token)
     verify_login_session(login, account)

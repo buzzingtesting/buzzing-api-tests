@@ -14,7 +14,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 REPORTS_DIR = PROJECT_DIR / "reports"
 
 
-def main():
+def main(*, allow_test_failures=False):
     os.chdir(PROJECT_DIR)
     environment = get_environment()
     data_group = get_testdata()
@@ -34,6 +34,9 @@ def main():
         pytest_args.extend(["-m", "pro"])
     result = pytest.main(pytest_args)
     if not any(results_dir.glob("*-result.json")):
+        if allow_test_failures and result == pytest.ExitCode.OK:
+            print("本轮未生成 Allure 原始结果", file=sys.stderr)
+            return 1
         return result
 
     write_report_environment(
@@ -45,16 +48,30 @@ def main():
     report_html = html_dir / "index.html"
     if report == 0 and report_html.is_file():
         publish_latest_report(report_html, REPORTS_DIR / "allure-report")
+        if allow_test_failures and result == pytest.ExitCode.TESTS_FAILED:
+            github_output = os.getenv("GITHUB_OUTPUT")
+            if github_output:
+                with Path(github_output).open("a", encoding="utf-8") as output:
+                    output.write("test_outcome=failure\n")
+            print("场景执行完毕，失败用例已记录在报告中")
+            return 0
+    elif allow_test_failures and report == 0:
+        print("本轮未生成 Allure HTML 报告", file=sys.stderr)
+        return result or 1
     return result or report
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="运行接口场景并生成 Allure 报告")
     parser.add_argument("--env", choices=BASE_URLS, help="指定运行环境，默认 preview")
+    parser.add_argument(
+        "--allow-test-failures", action="store_true",
+        help="用例失败时，报告生成成功后以成功状态退出",
+    )
     args = parser.parse_args()
     if args.env:
         os.environ["BUZZING_ENV"] = args.env
     try:
-        sys.exit(main())
+        sys.exit(main(allow_test_failures=args.allow_test_failures))
     except ValueError as error:
         sys.exit(str(error))

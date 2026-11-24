@@ -1,11 +1,50 @@
+import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from xml.etree import ElementTree
+
+import allure
 
 
 PROJECT_NAME = "Buzzing 接口自动化"
+
+
+def attach_market_sample(event, **identifiers):
+    sample = {"title": event["title"], "event_id": event["id"], **identifiers}
+    allure.attach(
+        json.dumps(sample, ensure_ascii=False, indent=2),
+        name="本轮选中市场",
+        attachment_type=allure.attachment_type.JSON,
+    )
+
+
+def junit_summary(reports_dir, *, bold_total=False):
+    files = list(reports_dir.glob("run-*/junit.xml"))
+    if not files:
+        return "本轮暂无用例统计，请查看 Actions 日志。"
+
+    junit_file = max(files, key=lambda path: path.stat().st_mtime_ns)
+    try:
+        root = ElementTree.parse(junit_file).getroot()
+    except (OSError, ElementTree.ParseError):
+        return "本轮 JUnit 报告无法读取，请查看 Actions 日志。"
+
+    outcomes = ("error", "failure", "skipped")
+    counts = dict.fromkeys((*outcomes, "passed"), 0)
+    for test in root.iter("testcase"):
+        result = next((tag for tag in outcomes if test.find(tag) is not None), "passed")
+        counts[result] += 1
+
+    total = f"用例 {sum(counts.values())} 条"
+    if bold_total:
+        total = f"**{total}**"
+    return (
+        f"{total}\n通过 {counts['passed']} · 失败 {counts['failure']} · "
+        f"错误 {counts['error']} · 跳过 {counts['skipped']}"
+    )
 
 
 def write_report_environment(results_dir, *, environment, base_url, data_group):
