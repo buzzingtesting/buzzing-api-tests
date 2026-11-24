@@ -127,18 +127,26 @@ CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LAB
 
 本地用同一个入口预检，运行 `.venv/bin/python -m function.preview_access`。HTTPX 使用默认 User-Agent、8 秒超时、关闭自动重定向。预检覆盖匿名会话、包装响应成功码和未登录拒绝码。
 
-## W03 Preview 受控交易
+## M03 Preview 自有订单簿
 
-`controlled_trades/test_orderbook.py` 是 M03 的首条代表路径，使用独立的 `trade_fixture`，在专用窗口串行运行。默认 pytest 和 `run.py` 仍从 `testcase/` 收集。运行器只接受自有盘口 4828026 的 NO、BUY LIMIT、限价 0.88、单账号单笔含费上限 2 测试 USDB。历史窗口已经结束。每次执行先取得新的明确窗口和资金分支。
+`controlled_trades/test_orderbook.py` 使用专用账号和盘口 `4828026` 的 NO 方向，按运行参数逐笔执行。默认 pytest 和 `run.py` 仍从 `testcase/` 收集。
 
-**运行环境。** 在可使用 Neo Gmail 工作负载身份的执行环境，把获准访问的后端仓库置于提交 `04bdad8214319d1d7a8a8d4651c5e1219f94992a`，`BUZZING_TRADE_BACKEND` 指向该 checkout 根目录。复用其中 `tests/preview_api/` 的登录、Privy 签名、分腿校验、成交对账及余单清理函数。使用 Python 3.12 安装本项目依赖及该 checkout 的 `tests/preview_api/requirements-browser.txt`，运行 `python -m playwright install --only-shell chromium`。在该 checkout 的 `tests/preview_api/privy_sdk/` 下用 Node 22.22.0、npm 10 执行 `npm ci --ignore-scripts --include=peer --include=optional` 和 `npm run build`。由执行环境注入 `PREVIEW_QA_GMAIL_CLOUD_ACCESS_TOKEN` 和 `PREVIEW_QA_PRIVY_APP_ID`。本入口在同一进程执行，不依赖 GitHub 跨仓库 dispatch。
+| `scenario` | pytest 用例 | 数据和主要断言 |
+|---|---|---|
+| `limit_buy`（旧配置默认值） | `test_limit_buy_no` | `BUY LIMIT`，`limit=0.88`，单笔含费预算 `budget_raw=2000000`。用 Cash 或纯 Credit，核对逻辑订单、累计成交与剩余量、手续费、持仓、余额及限价单历史。 |
+| `market_sell` | `test_market_sell_no` | `SELL MARKET`，使用专用钱包已有的自有 Cash 仓位，填 `quantity_raw`（10000 到 2000000）和小数 `min_price`，`budget_raw=0`，省略 `limit`。核对全部卖出、份额减少和扣费后到账。 |
+| `limit_cancel` | `test_post_only_limit_buy_cancel_no` | `BUY LIMIT`、Cash、`budget_raw=2000000`。选低于当前卖一的 `limit`，执行器设置 `post_only`。验证零成交挂单、冻结额、针对本单撤单、冻结释放及 `logical_order_ids` 的 `cancelled` 终态。零成交撤单应从 Profile 的开放和历史视图中消失。 |
 
-**运行参数。** 如下模板放入忽略目录 `.local/trade-run.json`。将占位符替换为本轮值。A/A2、B2/B3 为独立的两组数据池；登录身份、UID、maker 和 signer 取自固定版本的专用账号映射。Cash 的 `batch_id` 留空；纯 Credit 填已获准、可用且未过期的真实批次 ID。共用盘口的执行者须共享同一锁目录，或在调度侧串行。一个 run_id 只归属一笔，失败后按原记录查证。
+USD/USDB 价格使用每份的小数，例如 `0.88` 等于 88 cents。资金、成交量、份额和手续费按 6 位 raw 整数比较。市价卖出的 `min_price` 用于下单前深度检查和事后成交断言，市价订单本身没有限价保护。
+
+**运行环境。** 在可使用 Neo Gmail 工作负载身份的执行环境，把获准访问的后端仓库置于提交 `04bdad8214319d1d7a8a8d4651c5e1219f94992a`，`BUZZING_TRADE_BACKEND` 指向该 checkout 根目录。使用 Python 3.12 安装本项目依赖及该 checkout 的 `tests/preview_api/requirements-browser.txt`，运行 `python -m playwright install --only-shell chromium`。在该 checkout 的 `tests/preview_api/privy_sdk/` 下用 Node 22.22.0、npm 10 执行 `npm ci --ignore-scripts --include=peer --include=optional` 和 `npm run build`。市价卖出在临时目录从同一固定版本源码构建签名适配。由执行环境注入 `PREVIEW_QA_GMAIL_CLOUD_ACCESS_TOKEN` 和 `PREVIEW_QA_PRIVY_APP_ID`。
+
+**运行参数。** 将模板复制到忽略目录 `.local/`，为每轮使用单独文件。填入新窗口、独立的 `run_id` 和已分配的专用账号。登录身份、UID、maker 和 signer 取自固定版本的账号映射。Cash 的 `batch_id` 留空。纯 Credit 填获准、未动用且未过期的真实批次 ID。共用盘口的执行者须共享同一锁目录，或在调度侧串行。
 
 ```json
 {
-  "environment": "preview", "run_id": "<本轮唯一 UUID>", "account": "A2",
-  "funding": "credit", "batch_id": "<获批批次 ID>",
+  "environment": "preview", "run_id": "<本轮唯一 UUID>", "account": "A",
+  "scenario": "limit_buy", "funding": "cash", "batch_id": "",
   "start": "<含时区的窗口开始时间>", "end": "<含时区的窗口结束时间>",
   "venue": "buzzing", "market_id": "4828026", "outcome": "NO",
   "side": "BUY", "order_type": "LIMIT", "limit": "0.88", "budget_raw": "2000000"
@@ -149,9 +157,12 @@ CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LAB
 
 ```sh
 python -m pytest offline_tests -q
-BUZZING_ENV=preview python -m pytest controlled_trades/test_orderbook.py --trade-run=.local/trade-run.json --tb=short --no-showlocals -q
+BUZZING_ENV=preview python -m pytest controlled_trades/test_orderbook.py::test_limit_buy_no \
+  --trade-run=.local/trade-round-1.json --trade-run=.local/trade-round-2.json --tb=short --no-showlocals -q
 ```
 
-**执行与恢复。** 准备前核对会话与钱包、期初资金/持仓、挂单、限价内累计卖盘。Cash 要求足额 USDB、零冻结、无目标盘口未结单和既有授权；已有成交和仓位保留，按本轮前后差额核对。纯 Credit 可保留之前的 Cash 仓位，当前代表路径使用已验证且未动用的 3 USDB Credit 批次。客户端签名只接受单 Cash 腿，使用 Privy 核对 EIP-712 订单及签名人。纯 Credit 按批次校验预留和回执。Polymarket 代签能识别为独立分支，由 t105671 实施；混合单和 offset 会被拒绝。
+**临时身份契约验证。** 将临时 Preview 用户 Token 注入 `BUZZING_M03_PREVIEW_TOKEN` 后，可运行 `python -m pytest controlled_trades/test_preview_contract.py --tb=short --no-showlocals -q`。该入口只做 GET，仅用于会话、资金和订单契约检查。
 
-证据文件在 `reports/trade-runs/<run_id>.jsonl`，含本轮计划/逻辑订单、成交量、手续费、持仓和资金变化。先按原单处理不确定的提交结果；未成交余单只按本轮订单 ID 撤销，已成交记录保留。Cash 会核对临时授权的清理结果。遇到 `incomplete` 时用日志中的订单标识和链上授权状态核查后再分配账号。离线测试使用模拟回包；C 套件的验收证据来自新窗口中的真实运行。
+**执行与恢复。** 准备前核对会话与钱包、期初资金/持仓、盘口深度、挂单和授权。Cash 核对钱包持仓的前后差额，纯 Credit 使用已验证且未动用的 3 USDB 批次。每轮只有一次 `prepare` 和一次 `submit`，请求结果不明时使用日志按原单查证。只按本轮订单 ID 撤销待成交余单，已成交记录保留。Cash 在确认订单终态和冻结释放后核对临时授权清理。
+
+证据在 `reports/trade-runs/<run_id>.jsonl`，包括计划、逻辑订单、原始量、成交、剩余量、手续费、持仓和资金变化。遇到 `incomplete`，先按日志中的订单标识回读状态并核对链上授权再复用账号。D5 的两轮使用不同专用账号和钱包，同一场景的多轮可通过重复传入 `--trade-run` 一次串行执行。离线和临时身份验证仅用于开发，C 套件按计划第八节收集真实执行证据。
