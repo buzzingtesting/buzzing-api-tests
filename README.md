@@ -109,3 +109,32 @@ Preview 测试失败也会发送通知。未生成 Allure HTML 时，可通过�
 | Prod | `PROD_MAILOSAUR_SERVER_ID`、`BUZZING_PROD_PRIVY_APP_ID`、按需设置 `BUZZING_PROD_PRIVY_CLIENT_ID` | `PROD_MAILOSAUR_API_KEY`，改用 Gmail 取码时配置 `BUZZING_PROD_GMAIL_APP_PASSWORD` |
 
 本地用同一个入口预检，运行 `.venv/bin/python -m function.preview_access`。HTTPX 使用默认 User-Agent、8 秒超时、关闭自动重定向。预检覆盖匿名会话、包装响应成功码和未登录拒绝码。
+
+## W03 Preview 受控交易
+
+`controlled_trades/test_orderbook.py` 是 M03 的首条代表路径，使用独立的 `trade_fixture`，在专用窗口串行运行。默认 pytest 和 `run.py` 仍从 `testcase/` 收集。运行器只接受自有盘口 4828026 的 NO、BUY LIMIT、限价 0.88、单账号单笔含费上限 2 测试 USDB。历史窗口已经结束。每次执行先取得新的明确窗口和资金分支。
+
+**运行环境。** 在可使用 Neo Gmail 工作负载身份的执行环境，把获准访问的后端仓库置于提交 `04bdad8214319d1d7a8a8d4651c5e1219f94992a`，`BUZZING_TRADE_BACKEND` 指向该 checkout 根目录。复用其中 `tests/preview_api/` 的登录、Privy 签名、分腿校验、成交对账及余单清理函数。使用 Python 3.12 安装本项目依赖及该 checkout 的 `tests/preview_api/requirements-browser.txt`，运行 `python -m playwright install --only-shell chromium`。在该 checkout 的 `tests/preview_api/privy_sdk/` 下用 Node 22.22.0、npm 10 执行 `npm ci --ignore-scripts --include=peer --include=optional` 和 `npm run build`。由执行环境注入 `PREVIEW_QA_GMAIL_CLOUD_ACCESS_TOKEN` 和 `PREVIEW_QA_PRIVY_APP_ID`。本入口在同一进程执行，不依赖 GitHub 跨仓库 dispatch。
+
+**运行参数。** 如下模板放入忽略目录 `.local/trade-run.json`。将占位符替换为本轮值。A/A2、B2/B3 为独立的两组数据池；登录身份、UID、maker 和 signer 取自固定版本的专用账号映射。Cash 的 `batch_id` 留空；纯 Credit 填已获准、可用且未过期的真实批次 ID。共用盘口的执行者须共享同一锁目录，或在调度侧串行。一个 run_id 只归属一笔，失败后按原记录查证。
+
+```json
+{
+  "environment": "preview", "run_id": "<本轮唯一 UUID>", "account": "A2",
+  "funding": "credit", "batch_id": "<获批批次 ID>",
+  "start": "<含时区的窗口开始时间>", "end": "<含时区的窗口结束时间>",
+  "venue": "buzzing", "market_id": "4828026", "outcome": "NO",
+  "side": "BUY", "order_type": "LIMIT", "limit": "0.88", "budget_raw": "2000000"
+}
+```
+
+在项目根目录按需执行：
+
+```sh
+python -m pytest offline_tests -q
+BUZZING_ENV=preview python -m pytest controlled_trades/test_orderbook.py --trade-run=.local/trade-run.json --tb=short --no-showlocals -q
+```
+
+**执行与恢复。** 准备前核对会话与钱包、期初资金/持仓、挂单、限价内累计卖盘。Cash 要求足额 USDB、零冻结、无目标盘口未结单和既有授权；已有成交和仓位保留，按本轮前后差额核对。纯 Credit 可保留之前的 Cash 仓位，当前代表路径使用已验证且未动用的 3 USDB Credit 批次。客户端签名只接受单 Cash 腿，使用 Privy 核对 EIP-712 订单及签名人。纯 Credit 按批次校验预留和回执。Polymarket 代签能识别为独立分支，由 t105671 实施；混合单和 offset 会被拒绝。
+
+证据文件在 `reports/trade-runs/<run_id>.jsonl`，含本轮计划/逻辑订单、成交量、手续费、持仓和资金变化。先按原单处理不确定的提交结果；未成交余单只按本轮订单 ID 撤销，已成交记录保留。Cash 会核对临时授权的清理结果。遇到 `incomplete` 时用日志中的订单标识和链上授权状态核查后再分配账号。离线测试使用模拟回包；C 套件的验收证据来自新窗口中的真实运行。
