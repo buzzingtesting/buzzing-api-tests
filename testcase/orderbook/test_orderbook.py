@@ -13,9 +13,10 @@ from function.response_checks import expect_native
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("盘口与 Orderbook"),
+    allure.suite("Orderbook 盘口"),
+    allure.sub_suite("盘口与深度"),
     allure.epic(PROJECT_NAME),
-    allure.feature("盘口与 Orderbook"),
+    allure.feature("Orderbook 盘口"),
 ]
 
 DEPTH_LEVELS_SCHEMA = {

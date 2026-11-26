@@ -70,6 +70,13 @@ def list_closed_positions(client, *, params):
     )
 
 
+def list_position_history(client, *, params):
+    return request(
+        client, "GET", "/api/v1/orderbook/positions/history",
+        operation="position_history", params=params,
+    )
+
+
 def expect_positions_page(response, params):
     result = _expect_positions_page(
         response, params, POSITION_ITEM_SCHEMA, {"type": "integer", "minimum": 0},

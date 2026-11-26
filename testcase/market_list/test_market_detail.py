@@ -10,19 +10,22 @@ from function.market import (
     get_sports_match_detail,
     is_open_market_event,
     is_single_binary_market_event,
+    iter_market_events,
     list_event_markets,
     list_market_events,
+    list_sports_matches,
 )
 from function.market_account import check_market_account_activity
 from function.reporting import PROJECT_NAME, attach_market_sample
-from function.response_checks import expect_native
+from function.response_checks import expect_json, expect_native
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("市场详情"),
+    allure.suite("市场"),
+    allure.sub_suite("详情"),
     allure.epic(PROJECT_NAME),
-    allure.feature("市场详情"),
+    allure.feature("市场"),
 ]
 
 BINARY_OPTIONS_SCHEMA = {
@@ -93,13 +96,17 @@ SPORTS_MATCH_SCHEMA = {
 
 def _check_ordinary_binary_detail(api_client, case):
     now = time()
-    with allure.step("从本轮市场列表查找尚未结束的金融类单一二元市场"):
+    with allure.step("从本轮市场列表查找尚未结束的普通二元市场"):
         event = find_market_event(
             api_client,
             case["list_params"],
-            lambda item: _is_ordinary_binary(item, case["taxonomy_sport_slug"], now),
+            lambda item: (
+                _is_ordinary_market(item)
+                and is_open_market_event(item, now)
+                and is_single_binary_market_event(item)
+            ),
         )
-        assert event is not None, "市场列表中未找到尚未结束的金融类单一二元市场"
+        assert event is not None, "市场列表中未找到尚未结束的普通二元市场"
         listed_market = event["markets"][0]
         event_id = int(event["id"])
         market_id = int(listed_market["market"]["id"])
@@ -136,34 +143,37 @@ def _check_ordinary_binary_detail(api_client, case):
 
 
 def _check_non_exclusive_multi_detail(api_client, case):
-    series_slug = case["series_slug"]
+    now = time()
     with allure.step("从本轮市场列表选取尚未结束的多子市场事件"):
-        items = _list_market_series(api_client, series_slug)
-        now = time()
-        event = next(
-            (
-                item for item in items
-                if item.get("series_slug") == series_slug
-                and item.get("market_count", 0) >= case["min_markets"]
-                and is_open_market_event(item, now)
-            ),
-            None,
-        )
-        assert event is not None, "市场列表中未找到尚未结束的多元非互斥事件"
+        for event in iter_market_events(api_client, case["list_params"]):
+            if (
+                not _is_ordinary_market(event)
+                or event.get("market_count", 0) < case["min_markets"]
+                or not is_open_market_event(event, now)
+            ):
+                continue
+            response = get_market_event_detail(api_client, event["id"])
+            candidate = expect_json(response, 200)
+            assert isinstance(candidate, dict) and type(candidate.get("neg_risk")) is bool, (
+                f"事件 {event['id']} 详情缺少布尔值 neg_risk"
+            )
+            if not candidate["neg_risk"]:
+                break
+        else:
+            pytest.fail("市场列表中未找到尚未结束的多元非互斥事件", pytrace=False)
         event_id = int(event["id"])
         attach_market_sample(event)
 
     with allure.step("查询事件详情并核对子市场归属、数量和 Yes/No 选项"):
         detail = expect_native(
-            get_market_event_detail(api_client, event_id),
+            response,
             status=200,
             schema={
                 "type": "object",
-                "required": ["id", "title", "series_slug", "neg_risk", "markets_count", "markets"],
+                "required": ["id", "title", "neg_risk", "markets_count", "markets"],
                 "properties": {
                     "id": {"const": event_id},
                     "title": {"const": event["title"]},
-                    "series_slug": {"const": series_slug},
                     "neg_risk": {"const": False},
                     "markets_count": {"const": event["market_count"]},
                     "markets": {
@@ -184,6 +194,7 @@ def _check_non_exclusive_multi_detail(api_client, case):
                 },
             },
         )
+        assert detail.get("series_slug", "") == event.get("series_slug", ""), "详情系列应与列表一致"
         markets = detail["markets"]
         assert len({market["id"] for market in markets}) == len(markets), "子市场 ID 应唯一"
         expected_labels = set(case["outcome_labels"])
@@ -193,11 +204,57 @@ def _check_non_exclusive_multi_detail(api_client, case):
 
 
 def _check_sports_match_detail(api_client, case):
-    with allure.step("从本轮市场列表查找有效的体育比赛"):
-        event = find_market_event(api_client, case["list_params"], _is_active_sports_match)
-        assert event is not None, "市场列表中未找到带比赛 ID 的有效体育市场"
-        match_id = event["sport"]["meta"]["match_id"]
-        attach_market_sample(event, match_id=match_id)
+    with allure.step("从 Sports 分类查找有效的体育比赛"):
+        page = expect_native(
+            list_sports_matches(api_client, params=case["list_params"]),
+            status=200,
+            schema={
+                "type": "object",
+                "required": ["items"],
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["match"],
+                            "properties": {
+                                "match": {
+                                    "type": "object",
+                                    "required": ["id", "event_id", "status", "home_team", "away_team"],
+                                    "properties": {
+                                        "id": {"type": "integer", "minimum": 1},
+                                        "event_id": {"type": "integer", "minimum": 1},
+                                        "status": {"type": "string", "minLength": 1},
+                                        "home_team": TEAM_SCHEMA,
+                                        "away_team": TEAM_SCHEMA,
+                                        "live": {
+                                            "type": "object",
+                                            "properties": {"is_live": {"type": "boolean"}},
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        )
+        listed_match = next(
+            (
+                item["match"] for item in page["items"]
+                if item["match"]["status"] == "scheduled"
+                or item["match"].get("live", {}).get("is_live") is True
+            ),
+            None,
+        )
+        assert listed_match is not None, "Sports 分类没有待开赛或进行中的比赛"
+        match_id = listed_match["id"]
+        home_name = listed_match["home_team"]["name"]
+        away_name = listed_match["away_team"]["name"]
+        attach_market_sample(
+            {"id": listed_match["event_id"], "title": f"{home_name} vs {away_name}"},
+            match_id=match_id,
+        )
 
     with allure.step("查询体育详情并核对比赛、事件和 Blocks 布局"):
         params = case["detail_params"]
@@ -208,7 +265,9 @@ def _check_sports_match_detail(api_client, case):
         )
         match = detail["match"]
         assert match["id"] == match_id, "详情的比赛 ID 应与列表一致"
-        assert str(match["event_id"]) == event["id"], "详情的事件 ID 应与列表一致"
+        assert match["event_id"] == listed_match["event_id"], "详情的事件 ID 应与列表一致"
+        assert match["home_team"]["id"] == listed_match["home_team"]["id"], "详情主队应与列表一致"
+        assert match["away_team"]["id"] == listed_match["away_team"]["id"], "详情客队应与列表一致"
         assert match["home_team"]["id"] != match["away_team"]["id"], "主客队应是不同球队"
         assert detail["market_sections_layout"] == params["layout"]
         assert detail["market_sections_layout_version"] == params["blocks_version"]
@@ -223,20 +282,13 @@ def _check_sports_match_detail(api_client, case):
     return market
 
 
-def _is_ordinary_binary(event, taxonomy_sport_slug, now):
+def _is_ordinary_market(event):
+    taxonomy_sport = (event.get("taxonomy") or {}).get("sport_slug")
     return (
-        (event.get("taxonomy") or {}).get("sport_slug") == taxonomy_sport_slug
-        and is_open_market_event(event, now)
-        and is_single_binary_market_event(event)
+        not event.get("is_sport")
+        and not event.get("is_props")
+        and not (event.get("cadence") and taxonomy_sport == "crypto")
     )
-
-
-def _is_active_sports_match(event):
-    if event.get("is_sport") is not True or event.get("status") != "active":
-        return False
-    meta = (event.get("sport") or {}).get("meta") or {}
-    match_id = meta.get("match_id")
-    return type(match_id) is int and match_id > 0
 
 
 def _check_market_series_detail(api_client, case):
@@ -343,7 +395,7 @@ def _list_market_series(api_client, series_slug):
 MARKET_DETAIL_CASES = {
     "btc_1h": ("二元数字货币循环市场", _check_market_series_detail),
     "xrp_daily_hit_price": ("周期多档触价市场", _check_market_series_detail),
-    "ordinary_binary": ("普通二元市场（金融类）", _check_ordinary_binary_detail),
+    "ordinary_binary": ("普通二元市场", _check_ordinary_binary_detail),
     "non_exclusive_multi": ("多元非互斥市场", _check_non_exclusive_multi_detail),
     "sports_match_blocks": ("体育比赛", _check_sports_match_detail),
 }

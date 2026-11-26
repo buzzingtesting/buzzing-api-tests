@@ -8,9 +8,10 @@ from function.response_checks import expect_native
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("订单查询"),
+    allure.suite("限价单"),
+    allure.sub_suite("历史查询"),
     allure.epic(PROJECT_NAME),
-    allure.feature("订单查询"),
+    allure.feature("限价单"),
 ]
 
 

@@ -12,9 +12,9 @@ from function.reporting import PROJECT_NAME
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("持仓查询"),
+    allure.suite("Position 持仓"),
     allure.epic(PROJECT_NAME),
-    allure.feature("持仓查询"),
+    allure.feature("Position 持仓"),
 ]
 
 

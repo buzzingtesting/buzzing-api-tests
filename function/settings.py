@@ -12,7 +12,7 @@ WEB_ORIGINS = {
     "preview": "https://preview.buzzing.app",
     "prod": "https://www.buzzing.app",
 }
-DEFAULT_TESTDATA = {"preview": "tester1", "prod": "prod_testdata"}
+DEFAULT_TESTDATA = {"preview": "ci_tester", "prod": "prod_testdata"}
 DATA_FILE = Path(__file__).resolve().parents[1] / "ci.yaml"
 
 

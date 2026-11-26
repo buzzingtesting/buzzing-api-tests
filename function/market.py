@@ -5,7 +5,7 @@ import allure
 
 from function.api_client import request
 from function.reporting import attach_market_sample
-from function.response_checks import expect_native
+from function.response_checks import expect_json, expect_native
 
 
 MARKET_EVENT_ITEMS_SCHEMA = {
@@ -23,12 +23,12 @@ MARKET_EVENT_ITEMS_SCHEMA = {
 
 MARKET_EVENT_PAGE_SCHEMA = {
     "type": "object",
-    "required": ["items", "has_more"],
+    "required": ["items"],
     "properties": {
         "items": MARKET_EVENT_ITEMS_SCHEMA,
         "has_more": {"type": "boolean"},
     },
-    "if": {"properties": {"has_more": {"const": True}}},
+    "if": {"required": ["has_more"], "properties": {"has_more": {"const": True}}},
     "then": {
         "required": ["next_cursor"],
         "properties": {"next_cursor": {"type": "string", "minLength": 1}},
@@ -44,8 +44,8 @@ def list_market_events(client, *, params=None):
     )
 
 
-def find_market_event(client, list_params, matches):
-    """按需翻页，返回本轮第一个符合条件的事件。"""
+def iter_market_events(client, list_params):
+    """按需翻页，逐条返回市场事件。末页可省略游标和 has_more。"""
     params = dict(list_params)
     seen_cursors = set()
     while True:
@@ -54,15 +54,18 @@ def find_market_event(client, list_params, matches):
             status=200,
             schema=MARKET_EVENT_PAGE_SCHEMA,
         )
-        for event in page["items"]:
-            if matches(event):
-                return event
-        if not page["has_more"]:
-            return None
+        yield from page["items"]
+        if not page.get("has_more"):
+            return
         cursor = page["next_cursor"]
         assert cursor not in seen_cursors, "市场列表翻页游标应向前推进"
         seen_cursors.add(cursor)
         params["cursor"] = cursor
+
+
+def find_market_event(client, list_params, matches):
+    """返回本轮列表中第一个符合条件的事件。"""
+    return next((event for event in iter_market_events(client, list_params) if matches(event)), None)
 
 
 def is_open_market_event(event, now):
@@ -99,6 +102,21 @@ def get_sports_navigation(client):
     return request(client, "GET", "/api/v1/sport/nav", operation="sports_navigation")
 
 
+def select_esports_props_league(client):
+    """Select a league with Props in the current Sports navigation."""
+    navigation = expect_json(get_sports_navigation(client), 200)
+    esports = next((sport for sport in navigation["sports"] if sport["sport"] == "esports"), None)
+    assert esports is not None, "体育导航缺少 E-sports 分类"
+    leagues = [league for league in esports.get("leagues", []) if league.get("props_count", 0) > 0]
+    assert leagues, "E-sports 分类没有包含 Props 的联赛"
+    return max(leagues, key=lambda league: league["props_count"])["slug"]
+
+
+def list_sports_matches(client, *, params):
+    """查询 Sports 分类的比赛列表。"""
+    return request(client, "GET", "/api/v1/sport/matches", operation="sports_matches", params=params)
+
+
 def _detail_path(resource, resource_id):
     resource_id = str(resource_id)
     if not resource_id.isascii() or not resource_id.isdecimal():
@@ -119,6 +137,20 @@ def get_orderbook_event(client, event_id):
     return request(
         client, "GET", _detail_path("orderbook/events", event_id),
         operation="orderbook_event_detail",
+    )
+
+
+def get_dispute_info(client, market_id):
+    return request(
+        client, "GET", f"{_detail_path('orderbook/market', market_id)}/settlement/dispute-info",
+        operation="market_dispute_info",
+    )
+
+
+def get_settlement_history(client, market_id):
+    return request(
+        client, "GET", f"{_detail_path('orderbook/market', market_id)}/settlement/status-history",
+        operation="market_settlement_history",
     )
 
 

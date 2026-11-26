@@ -8,9 +8,10 @@ from function.response_checks import expect_native
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("资金查询"),
+    allure.suite("Orderbook 盘口"),
+    allure.sub_suite("购买力"),
     allure.epic(PROJECT_NAME),
-    allure.feature("资金查询"),
+    allure.feature("Orderbook 盘口"),
 ]
 
 RAW_AMOUNT_SCHEMA = {"type": "string", "pattern": "^[0-9]+$"}

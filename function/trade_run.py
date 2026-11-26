@@ -1,7 +1,6 @@
-import fcntl
 import json
 import re
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -10,10 +9,36 @@ from uuid import UUID
 
 LIMIT_BUY = "limit_buy"
 LIMIT_CANCEL = "limit_cancel"
+LIMIT_PARTIAL_CANCEL = "limit_partial_cancel"
+MARKET_BUY = "market_buy"
 MARKET_SELL = "market_sell"
+POLYMARKET_BTC_BUY = "polymarket_btc_buy"
+POLYMARKET_NBA_LIMIT_BUY = "polymarket_nba_limit_buy"
+POLYMARKET_NBA_LIMIT_CANCEL = "polymarket_nba_limit_cancel"
+POLYMARKET_NBA_SCENARIOS = {POLYMARKET_NBA_LIMIT_BUY, POLYMARKET_NBA_LIMIT_CANCEL}
+POLYMARKET_SCENARIOS = {POLYMARKET_BTC_BUY, *POLYMARKET_NBA_SCENARIOS}
+CI_TRADE_ACCOUNT = "ci_tester"
 MARKET_ID = "4828026"
 BUY_BUDGET_RAW = 2_000_000
-TRADE_SHAPES = {LIMIT_BUY: ("BUY", "LIMIT"), LIMIT_CANCEL: ("BUY", "LIMIT"), MARKET_SELL: ("SELL", "MARKET")}
+BTC_BUY_BUDGET_RAW = 1_500_000
+NBA_LIMIT_BUDGET_RAW = 3_000_000
+NBA_LIMIT_CANCEL_BUDGET_RAW = 2_000_000
+CI_TRADE_BUDGETS_RAW = {
+    POLYMARKET_BTC_BUY: BTC_BUY_BUDGET_RAW,
+    POLYMARKET_NBA_LIMIT_BUY: NBA_LIMIT_BUDGET_RAW,
+    POLYMARKET_NBA_LIMIT_CANCEL: NBA_LIMIT_CANCEL_BUDGET_RAW,
+}
+CI_TRADE_SCENARIOS = tuple(CI_TRADE_BUDGETS_RAW)
+TRADE_SHAPES = {
+    LIMIT_BUY: ("BUY", "LIMIT"),
+    LIMIT_CANCEL: ("BUY", "LIMIT"),
+    LIMIT_PARTIAL_CANCEL: ("BUY", "LIMIT"),
+    MARKET_BUY: ("BUY", "MARKET"),
+    MARKET_SELL: ("SELL", "MARKET"),
+    POLYMARKET_BTC_BUY: ("BUY", "MARKET"),
+    POLYMARKET_NBA_LIMIT_BUY: ("BUY", "LIMIT"),
+    POLYMARKET_NBA_LIMIT_CANCEL: ("BUY", "LIMIT"),
+}
 
 
 def raw_amount(value):
@@ -48,8 +73,18 @@ class TradeRun:
     start: datetime
     end: datetime
     scenario: str = LIMIT_BUY
-    price: Decimal = Decimal("0.88")
+    price: Decimal | None = Decimal("0.88")
     quantity_raw: int = 0
+    market_ids: tuple[str, ...] = ()
+    outcome: str = "NO"
+    partial_budget_cap_raw: int = 0
+    selected_budget_raw: int = 0
+
+    @property
+    def budget_raw(self):
+        if self.selected_budget_raw:
+            return self.selected_budget_raw
+        return CI_TRADE_BUDGETS_RAW.get(self.scenario, BUY_BUDGET_RAW if self.side == "BUY" else 0)
 
     @property
     def side(self):
@@ -63,31 +98,80 @@ class TradeRun:
     def from_file(cls, path, *, check_window=True):
         spec = json.loads(path.read_text())
         scenario = spec.get("scenario", LIMIT_BUY)
-        if (spec["environment"], spec["venue"], spec["market_id"], spec["outcome"]) != (
-                "preview", "buzzing", MARKET_ID, "NO"):
-            raise ValueError("本入口只支持已核对的 Preview 自有盘口 NO")
+        dynamic_partial = scenario == LIMIT_PARTIAL_CANCEL and "max_budget_raw" in spec
+        outcome = spec.get("outcome", "" if scenario in POLYMARKET_SCENARIOS or dynamic_partial else None)
+        if scenario in POLYMARKET_SCENARIOS:
+            outcomes = {"", "UP", "DOWN"} if scenario == POLYMARKET_BTC_BUY else {"", "YES", "NO"}
+            if (spec["environment"], spec["venue"]) != ("preview", "polymarket") or outcome not in outcomes:
+                raise ValueError("Polymarket 用例仅在 Preview 运行，方向必须符合所选场景")
+        elif (spec["environment"], spec["venue"], outcome) != ("preview", "buzzing", "" if dynamic_partial else "NO"):
+            raise ValueError("自有订单簿用例仅在 Preview 运行，方向必须符合所选场景")
+        dynamic_market = dynamic_partial or (
+            scenario in POLYMARKET_SCENARIOS and spec["account"] == CI_TRADE_ACCOUNT and "market_id" not in spec
+        )
+        market_ids = spec.get("market_ids")
+        if market_ids is None:
+            if not dynamic_market and spec.get("market_id") != MARKET_ID:
+                raise ValueError("请提供已核对的盘口或本轮批准的候选市场 ID 列表")
+            market_ids = []
+        elif (
+            "market_id" in spec or not isinstance(market_ids, list) or not market_ids
+            or any(not isinstance(market, str) or not re.fullmatch(r"[1-9][0-9]{0,19}", market) for market in market_ids)
+            or len(set(market_ids)) != len(market_ids)
+        ):
+            raise ValueError("market_ids 应为互不重复的候选市场 ID 字符串列表")
         if TRADE_SHAPES.get(scenario) != (spec["side"], spec["order_type"]):
             raise ValueError("订单方向和类型必须与本轮场景一致")
         run_id = str(UUID(spec["run_id"]))
         account, funding, batch = spec["account"], spec["funding"], spec.get("batch_id", "")
-        if account not in {"A", "A2", "B2", "B3"} or funding not in {"cash", "credit"}:
+        allowed_accounts = {"A", "A2", "B2", "B3"}
+        if scenario in POLYMARKET_SCENARIOS:
+            allowed_accounts.add(CI_TRADE_ACCOUNT)
+        if account not in allowed_accounts or funding not in {"cash", "credit"}:
             raise ValueError("请选择交易专用账号和已支持的资金路径")
         if (funding == "credit" and not re.fullmatch("[1-9][0-9]*", batch)) or (funding == "cash" and batch):
             raise ValueError("纯 Credit 必须指定本轮批准的批次；Cash 不使用批次")
-        budget = raw_amount(spec["budget_raw"])
-        if scenario == MARKET_SELL:
+        if funding == "credit" and (market_ids or scenario != LIMIT_BUY):
+            raise ValueError("纯 Credit 当前使用已核对的固定盘口限价路径")
+        partial_budget_cap = 0
+        if dynamic_partial:
+            partial_budget_cap = raw_amount(spec["max_budget_raw"])
+            if (spec.get("funding") != "cash" or partial_budget_cap <= BUY_BUDGET_RAW
+                    or any(key in spec for key in ("market_id", "market_ids", "limit", "budget_raw",
+                                                   "quantity_raw", "min_price", "max_price"))):
+                raise ValueError("动态部分成交需要 Cash 与大于 2 U 的单笔上限，盘口和实际 Amount 由当轮计算")
+        elif "max_budget_raw" in spec:
+            raise ValueError("max_budget_raw 只适用于动态部分成交")
+        budget = 0 if dynamic_partial else raw_amount(spec["budget_raw"])
+        if scenario == POLYMARKET_BTC_BUY:
+            price, quantity = price_amount(spec.get("max_price", "1"), allow_one=True), 0
+            if (funding != "cash" or budget != BTC_BUY_BUDGET_RAW or (not market_ids and not dynamic_market)
+                    or any(key in spec for key in ("market_id", "limit", "quantity_raw", "min_price"))):
+                raise ValueError("BTC 市价买入使用 1.5 Cash 含费预算，由 CI 动态选样或使用指定的候选列表")
+        elif scenario in POLYMARKET_NBA_SCENARIOS:
+            price, quantity = None, 0
+            if (account != CI_TRADE_ACCOUNT or funding != "cash" or budget != CI_TRADE_BUDGETS_RAW[scenario]
+                    or any(key in spec for key in ("market_id", "limit", "quantity_raw", "min_price", "max_price"))):
+                raise ValueError("NBA 限价场景使用 CI 测试账号和本场景规定的含费 Cash 预算")
+        elif dynamic_partial:
+            price, quantity = None, 0
+        elif scenario == MARKET_SELL:
             price = price_amount(spec["min_price"])
             quantity = raw_amount(spec["quantity_raw"])
             if funding != "cash" or budget or spec.get("limit") or not 10_000 <= quantity <= 2_000_000:
                 raise ValueError("市价卖出仅允许专用 Cash 仓位，数量为 0.01 至 2 份，无买入预算")
+        elif scenario == MARKET_BUY:
+            price, quantity = price_amount(spec["max_price"]), 0
+            if budget != BUY_BUDGET_RAW or any(key in spec for key in ("limit", "quantity_raw", "min_price")):
+                raise ValueError("市价买入使用 2 测试 USDB 含费预算和 max_price")
         else:
             price, quantity = price_amount(spec["limit"]), 0
-            if budget != BUY_BUDGET_RAW or "quantity_raw" in spec or "min_price" in spec:
+            if budget != BUY_BUDGET_RAW or any(key in spec for key in ("quantity_raw", "min_price", "max_price")):
                 raise ValueError("限价买入使用 2 测试 USDB 含费预算")
-            if (scenario == LIMIT_BUY and price != Decimal("0.88")) or (scenario == LIMIT_CANCEL and funding != "cash"):
-                raise ValueError("代表性限价成交使用 0.88；主动挂单撤单使用 Cash")
+            if scenario == LIMIT_BUY and not market_ids and price != Decimal("0.88"):
+                raise ValueError("原固定盘口限价成交使用 0.88")
         result = cls(run_id, account, funding, batch, timestamp(spec["start"]), timestamp(spec["end"]),
-                     scenario, price, quantity)
+                     scenario, price, quantity, tuple(market_ids), outcome, partial_budget_cap)
         if result.start >= result.end:
             raise ValueError("交易窗口的起点必须早于终点")
         if check_window:
@@ -100,19 +184,30 @@ class TradeRun:
 
 
 @contextmanager
-def trade_journal(root, run):
+def trade_journal(root, run, *, btc_sell=False, nba_replay=False):
+    import fcntl
+
     root.mkdir(parents=True, exist_ok=True)
-    with (root / f"{MARKET_ID}.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with (root / f"{run.run_id}.jsonl").open("x", encoding="utf-8") as stream:
+    markets = run.market_ids
+    if not markets and run.scenario not in POLYMARKET_SCENARIOS and not run.partial_budget_cap_raw:
+        markets = (MARKET_ID,)
+    with ExitStack() as locks:
+        for lock_name in sorted((*markets, f"account-{run.account}")):
+            lock = locks.enter_context((root / f"{lock_name}.lock").open("a"))
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        suffix = "-sell" if btc_sell else "-replay" if nba_replay else ""
+        with (root / f"{run.run_id}{suffix}.jsonl").open("x", encoding="utf-8") as stream:
             def record(**fields):
                 row = dict(fields, run_id=run.run_id, account=run.account,
                            utc=datetime.now(timezone.utc).isoformat())
                 print(json.dumps(row, ensure_ascii=False), file=stream, flush=True)
 
-            record(stage="start", funding=run.funding, market=MARKET_ID, batch_id=run.batch_id,
-                   scenario=run.scenario, side=run.side, order_type=run.order_type, price=str(run.price),
-                   quantity_raw=run.quantity_raw, budget_raw=BUY_BUDGET_RAW if run.side == "BUY" else 0)
+            market_scope = {"candidate_markets": list(markets)} if run.scenario in POLYMARKET_SCENARIOS or run.market_ids or run.partial_budget_cap_raw else {"market": MARKET_ID}
+            record(stage="start", funding=run.funding, **market_scope, batch_id=run.batch_id,
+                   scenario=run.scenario, side="SELL" if btc_sell else run.side, order_type=run.order_type,
+                   price=str(run.price) if run.price is not None else None, quantity_raw=run.quantity_raw,
+                   budget_raw=0 if btc_sell or nba_replay or run.partial_budget_cap_raw else run.budget_raw,
+                   max_budget_raw=run.partial_budget_cap_raw or None)
             try:
                 yield record
             except BaseException as error:
@@ -137,6 +232,17 @@ def check_depth(depth, token, limit, budget, *, scenario=LIMIT_BUY, quantity_raw
     if scenario == LIMIT_CANCEL:
         if quantity:
             raise ValueError("撤单用例的 post-only 限价会与卖盘交叉")
+        return quantity
+    if scenario == LIMIT_PARTIAL_CANCEL:
+        if not quantity:
+            raise ValueError("部分成交场景的限价内暂无卖盘")
+        if quantity * limit >= budget:
+            raise ValueError("限价内的卖盘足以覆盖整笔预算，需选取可控的部分成交盘口")
+        return quantity
+    if scenario == MARKET_BUY:
+        quote = sum(price * size for price, size in levels if price <= limit)
+        if quote < budget:
+            raise ValueError("预检价格上限内的卖盘金额不足")
         return quantity
     if quantity * limit < budget:
         raise ValueError("批准限价内的卖盘深度不足")

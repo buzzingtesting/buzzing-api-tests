@@ -14,9 +14,18 @@ PROJECT_DIR = Path(__file__).resolve().parent
 REPORTS_DIR = PROJECT_DIR / "reports"
 
 
-def main(*, allow_test_failures=False):
+def main(*, allow_test_failures=False, trade_runs=(), dispute_market_id=None, disputed_market_id=None):
+    trade_runs = tuple(Path(path).resolve() for path in trade_runs)
     os.chdir(PROJECT_DIR)
     environment = get_environment()
+    if trade_runs and environment != "preview":
+        raise ValueError("受控交易只能加入 Preview 运行")
+    dispute_args = []
+    for option, market_id in (("--dispute-market-id", dispute_market_id), ("--disputed-market-id", disputed_market_id)):
+        if market_id is not None:
+            dispute_args.extend([option, str(market_id)])
+    if dispute_args and trade_runs:
+        raise ValueError("请单独运行手动争议回归")
     data_group = get_testdata()
     REPORTS_DIR.mkdir(exist_ok=True)
     run_dir = Path(mkdtemp(prefix="run-", dir=REPORTS_DIR))
@@ -30,8 +39,12 @@ def main(*, allow_test_failures=False):
         f"--junitxml={run_dir / 'junit.xml'}",
         f"--alluredir={results_dir}",
     ]
-    if environment == "prod":
+    if dispute_args:
+        pytest_args.extend(["-m", "manual_dispute", *dispute_args])
+    elif environment == "prod":
         pytest_args.extend(["-m", "pro"])
+    for path in trade_runs:
+        pytest_args.extend(["--trade-run", str(path)])
     result = pytest.main(pytest_args)
     if not any(results_dir.glob("*-result.json")):
         if allow_test_failures and result == pytest.ExitCode.OK:
@@ -64,6 +77,10 @@ def main(*, allow_test_failures=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="运行接口场景并生成 Allure 报告")
     parser.add_argument("--env", choices=BASE_URLS, help="指定运行环境，默认 preview")
+    parser.add_argument("--trade-run", action="append", type=Path, default=[],
+                        help="加入已批准的 Preview 交易参数 JSON，可重复传入")
+    parser.add_argument("--dispute-market-id", type=int, help="指定 Preview 自营市场并单独运行争议回归")
+    parser.add_argument("--disputed-market-id", type=int, help="指定 Preview 争议中的市场并验证再次发起的资格")
     parser.add_argument(
         "--allow-test-failures", action="store_true",
         help="用例失败时，报告生成成功后以成功状态退出",
@@ -72,6 +89,7 @@ if __name__ == "__main__":
     if args.env:
         os.environ["BUZZING_ENV"] = args.env
     try:
-        sys.exit(main(allow_test_failures=args.allow_test_failures))
+        sys.exit(main(allow_test_failures=args.allow_test_failures, trade_runs=args.trade_run,
+                      dispute_market_id=args.dispute_market_id, disputed_market_id=args.disputed_market_id))
     except ValueError as error:
         sys.exit(str(error))

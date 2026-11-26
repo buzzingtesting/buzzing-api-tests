@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,9 +13,18 @@ import httpx
 import pytest
 
 from function.api_client import create_client, request
-from function.settings import get_environment
-from function.trade_cash import check_limit_views, execute_cash, sign_plan
-from function.trade_run import BUY_BUDGET_RAW, LIMIT_CANCEL, MARKET_SELL, check_depth, raw_amount, signing_route, timestamp
+from function.identity import get_test_jwt
+from function.polymarket_limit_trade import execute_nba_limit_buy
+from function.polymarket_replay import verify_nba_limit_replay
+from function.polymarket_trade import execute_market_cycle, read_btc_trade_wallet
+from function.settings import get_environment, load_test_data
+from function.trade_cash import check_order_views, execute_cash, sign_plan
+from function.trade_market import expected_limit_price, read_trade_depth, select_trade_market
+from function.trade_market import read_partial_cancel_quote, select_partial_cancel_market
+from function.trade_run import (
+    BUY_BUDGET_RAW, CI_TRADE_ACCOUNT, LIMIT_CANCEL, LIMIT_PARTIAL_CANCEL, MARKET_SELL, POLYMARKET_BTC_BUY,
+    POLYMARKET_NBA_SCENARIOS, POLYMARKET_SCENARIOS, raw_amount, signing_route, timestamp,
+)
 from function.trade_state import BOOK, OrderAmounts, order_fills, order_query, own_order
 
 
@@ -70,9 +80,8 @@ def signing_bundle(support, run):
         yield bundle
 
 
-def checked_api(client, run, support, record):
-    market = support.trade.TRADE_NO_MARKET
-    position_id = market["token_id"]
+def checked_api(client, run, support, record, *, market=None):
+    market = support.trade.TRADE_NO_MARKET if market is None else market
     prepared = {}
     writes = {"/api/v1/login/preview", "/api/v1/login", BOOK + "orders/prepare",
               BOOK + "orders/submit", BOOK + "order/cancel"}
@@ -89,9 +98,13 @@ def checked_api(client, run, support, record):
                 "use_credit": run.funding == "credit", "post_only": run.scenario == LIMIT_CANCEL,
             }
             if run.side == "BUY":
-                expected.update(price=str(run.price), total_budget=str(BUY_BUDGET_RAW))
+                expected["total_budget"] = str(run.budget_raw)
             else:
                 expected.update(quantity=str(run.quantity_raw))
+            if run.order_type == "LIMIT":
+                expected["price"] = str(run.price)
+            elif any(field in json for field in ("price", "expiration")):
+                raise ValueError("市价单不得使用限价单字段")
             if any(json.get(key) != value for key, value in expected.items()):
                 raise ValueError("prepare 请求与本轮场景配置不符")
             prepared["started"] = True
@@ -149,11 +162,16 @@ def checked_api(client, run, support, record):
                 pytest.fail(prepared["receipt_error"], pytrace=False)
         return reply
 
-    def depth(session):
-        reply = api("GET", BOOK + "depth", 200, token=session, params={"source": "orderbook", "position_id": position_id})
-        size = check_depth(support.cash.data(reply), position_id, run.price, BUY_BUDGET_RAW,
-                           scenario=run.scenario, quantity_raw=run.quantity_raw)
-        record(stage="depth_checked", eligible_quantity_raw=size)
+    def depth(session, *, initialize=False):
+        size, best_ask, best_bid = read_trade_depth(api, support.cash, session, market, run)
+        record(stage="depth_checked", eligible_quantity_raw=size, best_ask=best_ask, best_bid=best_bid)
+        if initialize and run.order_type == "LIMIT":
+            record(
+                stage="limit_ticket_expected", best_ask=best_ask, best_bid=best_bid,
+                expected_buy_limit=expected_limit_price(best_ask, side="BUY"),
+                expected_sell_limit=expected_limit_price(best_bid, side="SELL"),
+            )
+        return size
 
     def verify_receipt():
         if "receipt_error" in prepared:
@@ -208,38 +226,100 @@ def wallet_session(support, api, run, record, bundle):
             yield sdk, session, uid, signer, maker
 
 
-def execute_trade(run, record):
+def execute_trade(run, record, *, btc_buy=None, nba_buy=None):
     if get_environment() != "preview":
         raise ValueError("交易 fixture 只支持 Preview")
     run.check_window()
+    if run.scenario in POLYMARKET_SCENARIOS:
+        data = load_test_data()
+        volume_list = {"sort_by": "volume", "page_size": data["market_cases"]["home_list"]["page_size"]}
+        if run.account == CI_TRADE_ACCOUNT:
+            token = get_test_jwt(run.account, data[run.account])
+            with create_client(token) as client:
+                uid, signer, maker = read_btc_trade_wallet(client)
+                client.headers["X-Wallet-Address"] = maker
+                record(stage="identity_checked", uid=uid)
+                if run.scenario in POLYMARKET_NBA_SCENARIOS:
+                    if nba_buy is not None:
+                        return verify_nba_limit_replay(client, run, uid, record, nba_buy)
+                    return execute_nba_limit_buy(client, run, uid, signer, maker, record, data["market_cases"]["nba_limit_buy"])
+                return execute_market_cycle(client, run, uid, signer, maker, record, volume_list, btc_buy)
+    checkout = os.getenv("BUZZING_TRADE_BACKEND")
+    if run.partial_budget_cap_raw and not checkout:
+        pytest.skip("Runner 尚未配置自营市场客户端签名所需的 BUZZING_TRADE_BACKEND")
     support = backend_support(os.environ["BUZZING_TRADE_BACKEND"])
     trade = support.trade
     with create_client() as client, signing_bundle(support, run) as bundle:
         api, depth, verify_receipt = checked_api(client, run, support, record)
         with wallet_session(support, api, run, record, bundle) as (sdk, session, uid, signer, maker):
             record(stage="identity_checked", uid=uid, backend_revision=BACKEND_REVISION)
-            trade.check_followup_funding(api, record, session, run.account, uid, maker)
-            depth(session)
+            if run.scenario == POLYMARKET_BTC_BUY:
+                with create_client(session) as trading_client:
+                    trading_client.headers["X-Wallet-Address"] = maker
+                    return execute_market_cycle(trading_client, run, uid, signer, maker, record, volume_list, btc_buy)
+            market = trade.TRADE_NO_MARKET
+            partial_quote = None
+            if run.partial_budget_cap_raw:
+                list_params = load_test_data()["market_cases"]["orderbook_binary"]["list_params"]
+                market, partial_quote = select_partial_cancel_market(
+                    client, {**list_params, "sort_by": "newest"}, record, max_budget_raw=run.partial_budget_cap_raw,
+                )
+                run = replace(run, price=partial_quote.price, selected_budget_raw=partial_quote.budget_raw)
+                api, depth, verify_receipt = checked_api(client, run, support, record, market=market)
+            else:
+                trade.check_followup_funding(api, record, session, run.account, uid, maker)
+                if run.market_ids:
+                    list_params = load_test_data()["market_cases"]["orderbook_binary"]["list_params"]
+                    market = select_trade_market(client, api, support.cash, session, run, uid, maker, record, list_params)
+                    api, depth, verify_receipt = checked_api(client, run, support, record, market=market)
+            depth(session, initialize=True)
             run.check_window()
+
             def prepare():
                 depth(session)
                 return api("POST", BOOK + "orders/prepare", 200, token=session, timeout=20,
-                           json=prepare_payload(run, trade.TRADE_NO_MARKET, signer, maker))
+                           json=prepare_payload(run, market, signer, maker))
 
             if run.funding == "cash":
                 if run.side == "BUY":
-                    trade.check_cash_readiness(api, record, session, run.account, uid)
+                    if not run.market_ids and partial_quote is None:
+                        trade.check_cash_readiness(api, record, session, run.account, uid)
+                    check_buying_capacity(support.cash, api, record, session, market, budget_raw=run.budget_raw)
 
                 def prepare_cash():
-                    plan = sign_plan(support, sdk, record, run, signer, maker, prepare())
-                    if run.scenario == MARKET_SELL:
-                        depth(session)
+                    plan = sign_plan(support, sdk, record, run, signer, maker, prepare(), market=market)
+                    if partial_quote is not None:
+                        current = read_partial_cancel_quote(client, market["token_id"])
+                        if current != partial_quote:
+                            record(stage="partial_quote_moved", limit_price=str(partial_quote.price),
+                                   eligible_quantity_raw=partial_quote.quantity_raw,
+                                   observed_limit_price=str(current.price) if current else None,
+                                   observed_quantity_raw=current.quantity_raw if current else 0)
+                            pytest.skip("提交前卖一价格或份额已变动，本轮未提交订单")
+                        if plan.quantity <= partial_quote.quantity_raw:
+                            raise ValueError("准备单扣除预估手续费后未留出余单份额")
+                        record(stage="partial_quote_rechecked", limit_price=str(partial_quote.price),
+                               eligible_quantity_raw=partial_quote.quantity_raw, ordered_raw=plan.quantity,
+                               budget_raw=run.budget_raw)
+                    elif run.order_type == "MARKET" or run.scenario == LIMIT_PARTIAL_CANCEL:
+                        size = depth(session)
+                        if run.scenario == LIMIT_PARTIAL_CANCEL and size >= plan.quantity:
+                            raise ValueError("当前限价内卖盘可全部成交，无法稳定验证部分成交后撤单")
                     return plan
 
-                execute_cash(support, api, record, sdk, session, run, uid, signer, maker, prepare_cash)
+                execute_cash(support, api, record, sdk, session, run, uid, signer, maker, prepare_cash, market=market)
             else:
                 execute_credit(support, api, record, session, run, uid, maker, prepare)
             verify_receipt()
+
+
+def check_buying_capacity(cash, api, record, session, market, *, budget_raw=BUY_BUDGET_RAW):
+    params = {"condition_id": market["condition_id"], "token_id": market["token_id"]}
+    funds = cash.data(api("GET", BOOK + "buying-power", 200, token=session, params=params))
+    balance, buying_power = (raw_amount(funds[field]) for field in ("balance", "buying_power"))
+    if min(balance, buying_power) < budget_raw:
+        raise ValueError("所选方向的 Cash 余额或购买力不足以覆盖本轮预算")
+    record(stage="buying_power_checked", balance_raw=balance, buying_power_raw=buying_power)
 
 
 def prepare_payload(run, market, signer, maker):
@@ -249,7 +329,9 @@ def prepare_payload(run, market, signer, maker):
         "maker_address": maker, "signer_address": signer, "signature_type": 2,
     }
     if run.order_type == "LIMIT":
-        payload.update(price=str(run.price), total_budget=str(BUY_BUDGET_RAW), expiration=str(int(time()) + 240))
+        payload.update(price=str(run.price), total_budget=str(run.budget_raw), expiration=str(int(time()) + 240))
+    elif run.side == "BUY":
+        payload["total_budget"] = str(run.budget_raw)
     else:
         payload["quantity"] = str(run.quantity_raw)
     return payload
@@ -278,4 +360,4 @@ def execute_credit(support, api, record, session, run, uid, maker, prepare):
     record(stage="quantity_checked", logical_order_id=prepared["logical_id"], order_id=order["order_id"],
            ordered_raw=amounts.quantity, quantity_raw=amounts.filled, remaining_raw=amounts.remaining,
            status=order["status"])
-    check_limit_views(api, cash, record, session, order, run, amounts)
+    check_order_views(api, cash, record, session, order, run, amounts)

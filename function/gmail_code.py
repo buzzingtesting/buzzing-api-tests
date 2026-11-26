@@ -15,6 +15,7 @@ from function.settings import get_environment
 
 
 GMAIL_PASSWORD_FILE = Path(__file__).resolve().parents[1] / ".local" / "gmail_app_password"
+CI_GMAIL_PASSWORD_FILE = GMAIL_PASSWORD_FILE.with_name("gmail_app_password_ci")
 
 
 class _EmailText(HTMLParser):
@@ -116,12 +117,16 @@ def get_app_password(email, *, password_env=None):
             f"gmail_password_env 必须匹配 {default_variable} 或以 {default_variable}_ 开头"
         )
     app_password = os.getenv(variable, "")
-    if not app_password and environment == "preview" and GMAIL_PASSWORD_FILE.is_file():
-        saved_email, _, saved_password = GMAIL_PASSWORD_FILE.read_text(
-            encoding="utf-8"
-        ).partition("\n")
-        if saved_email.casefold() == email.casefold():
-            app_password = saved_password
+    if not app_password and environment == "preview":
+        password_files = (GMAIL_PASSWORD_FILE,)
+        if variable == "BUZZING_GMAIL_APP_PASSWORD_CI":
+            password_files = (CI_GMAIL_PASSWORD_FILE, *password_files)
+        for path in password_files:
+            if path.is_file():
+                saved_email, _, saved_password = path.read_text(encoding="utf-8").partition("\n")
+                if saved_email.casefold() == email.casefold() and saved_password.strip():
+                    app_password = saved_password
+                    break
     if not app_password and sys.stdin.isatty():
         app_password = getpass("请输入 Gmail 应用专用密码：")
     app_password = "".join(app_password.split())

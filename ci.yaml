@@ -1,3 +1,4 @@
+# 测试账号
 tester1:
   environment: preview
   email: ddjking998@gmail.com
@@ -18,7 +19,7 @@ ci_tester:
 
 testdata2:
   environment: preview
-  email: "ddjking998@gmail.com"  # 填已在 Preview 建好的 Mailosaur 测试账号邮箱
+  email: ""  # 启用此数据组时填已建好的 Preview Mailosaur 测试账号
   mail_subject: Your login code for Buzzing_dev
   mail_provider: mailosaur
   expected_session_status: 200
@@ -33,6 +34,7 @@ prod_testdata:
   expected_auth_levels: [1, 2]
 
 market_cases:
+  # market_list：排序、分类和详情。市场 ID、分页游标和电竞联赛从本轮响应获取。
   home_list:
     page_size: 30
     sort_modes:
@@ -43,8 +45,14 @@ market_cases:
       24hr_volume: 24hr Volume
       end_soon: End Soon
 
+  nba_limit_buy:
+    title_keyword: NBA
+    post_only_ticks: 1
+    list_params:
+      page_size: 30
+      sort_by: 24hr_volume
+
   esports_props:
-    league_slug: counter-strike
     params:
       page: 1
       page_size: 20
@@ -70,32 +78,38 @@ market_cases:
     min_markets: 2
     outcome_labels: ["Yes", "No"]
 
+  # 普通二元、多元非互斥和盘口共用的列表选样参数
   ordinary_binary:
-    taxonomy_sport_slug: finance
-    list_params:
+    list_params: &market_selection
       page_size: 30
       sort_by: top_picks
 
   non_exclusive_multi:
-    series_slug: tsla-multi-strikes-weekly
+    list_params: *market_selection
     min_markets: 2
     outcome_labels: ["Yes", "No"]
 
   sports_match_blocks:
     list_params:
-      page_size: 30
-      sort_by: top_picks
+      page: 1
+      page_size: 20
     detail_params:
       layout: blocks
       blocks_version: 1
       lang: en-US
 
+  # orderbook：盘口与购买力
   orderbook_binary:
-    list_params:
-      page_size: 30
-      sort_by: top_picks
+    list_params: *market_selection
     depth_source: orderbook
 
+  # 市场详情内的持仓与挂单查询
+  market_account:
+    page: 1
+    page_size: 100
+    order_type: limit
+
+  # position：账户持仓
   open_positions:
     params:
       state: open
@@ -109,15 +123,10 @@ market_cases:
       page: 1
       page_size: 20
 
+  # limit_order：账户订单历史
   order_history:
     params:
       view: history
       source: all
       page_size: 20
     terminal_statuses: [filled, cancelled, canceled, expired, completed, failed, rejected]
-
-  market_account:
-    page: 1
-    page_size: 100
-    order_type: limit
-    open_order_statuses: [open, partial]
