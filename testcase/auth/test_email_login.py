@@ -9,14 +9,14 @@ from function.privy_email import (
     verify_email_code,
     verify_privy_user,
 )
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.response_checks import expect_native
 
 
 MODULE_NAME = "身份与登录"
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite(MODULE_NAME),
+    allure.suite(ordered_suite_name(MODULE_NAME)),
     allure.epic(PROJECT_NAME),
     allure.feature(MODULE_NAME),
 ]

@@ -10,6 +10,19 @@ import allure
 
 
 PROJECT_NAME = "Buzzing 接口自动化"
+REPORT_SUITE_ORDER = (
+    "身份与登录",
+    "市场",
+    "Orderbook 盘口",
+    "市价单",
+    "限价单",
+    "Position 持仓",
+    "市场争议与结算",
+)
+
+
+def ordered_suite_name(name):
+    return f"{REPORT_SUITE_ORDER.index(name) + 1:02d} {name}"
 
 
 def attach_market_sample(event, **identifiers):

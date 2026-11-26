@@ -10,7 +10,7 @@ from function.orders import list_orders
 from function.polymarket_limit_trade import CANCELLED, LIMIT_EXPIRATION_SECONDS, LIMIT_FEE_RESERVE
 from function.polymarket_limit_trade import read_asks, read_withdrawable_cash, wait_cash_snapshot, wait_limit_order
 from function.polymarket_trade import read_cash_position, shares, submit_polymarket_order, wait_for_cash_position
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.response_checks import expect_json
 from function.trade_contract import TradeFixture, require_empty_market_orders
 from function.trade_run import raw_amount
@@ -18,7 +18,7 @@ from function.trade_state import BOOK
 
 
 @allure.parent_suite(PROJECT_NAME)
-@allure.suite("限价单")
+@allure.suite(ordered_suite_name("限价单"))
 @allure.epic(PROJECT_NAME)
 @allure.feature("限价单")
 @allure.title("Polymarket 限价买入 · 部分成交后撤销余单")

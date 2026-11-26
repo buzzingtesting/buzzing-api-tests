@@ -12,7 +12,7 @@ from function.market import is_open_market_event, iter_market_events
 from function.polymarket_funding import execute_funded_limit
 from function.polymarket_limit_trade import LIMIT_EXPIRATION_SECONDS, read_withdrawable_cash, select_nba_limit_quote
 from function.polymarket_trade import ensure_market_trading, market_closed_reason, read_btc_trade_wallet, read_cash_position
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.response_checks import expect_envelope, expect_json
 from function.settings import get_environment
 from function.trade_contract import TradeFixture, expect_trade_problem, funding_snapshot
@@ -23,7 +23,7 @@ from function.trade_state import BOOK
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("Orderbook 盘口"),
+    allure.suite(ordered_suite_name("Orderbook 盘口")),
     allure.sub_suite("交易高风险分支"),
     allure.epic(PROJECT_NAME),
     allure.feature("交易高风险分支"),

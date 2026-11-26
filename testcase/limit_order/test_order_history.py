@@ -2,13 +2,13 @@ import allure
 
 from function.identity import get_session_user_id
 from function.orders import list_orders
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.response_checks import expect_native
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("限价单"),
+    allure.suite(ordered_suite_name("限价单")),
     allure.sub_suite("历史查询"),
     allure.epic(PROJECT_NAME),
     allure.feature("限价单"),

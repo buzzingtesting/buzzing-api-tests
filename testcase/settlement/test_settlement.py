@@ -13,14 +13,14 @@ from function.positions import (
     list_position_history,
     list_positions,
 )
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.response_checks import expect_native
 from function.trade_run import raw_amount
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("市场争议与结算"),
+    allure.suite(ordered_suite_name("市场争议与结算")),
     allure.epic(PROJECT_NAME),
     allure.feature("市场争议与结算"),
 ]

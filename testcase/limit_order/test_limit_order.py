@@ -1,14 +1,14 @@
 import allure
 import pytest
 
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.trade_run import LIMIT_BUY, LIMIT_CANCEL, LIMIT_PARTIAL_CANCEL, POLYMARKET_NBA_LIMIT_BUY
 from function.trade_run import POLYMARKET_NBA_LIMIT_CANCEL
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("限价单"),
+    allure.suite(ordered_suite_name("限价单")),
     allure.sub_suite("下单与撤单"),
     allure.epic(PROJECT_NAME),
     allure.feature("限价单"),

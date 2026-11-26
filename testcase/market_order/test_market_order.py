@@ -1,13 +1,13 @@
 import allure
 import pytest
 
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.trade_run import MARKET_BUY, MARKET_SELL, POLYMARKET_BTC_BUY
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("市价单"),
+    allure.suite(ordered_suite_name("市价单")),
     allure.epic(PROJECT_NAME),
     allure.feature("市价单"),
 ]

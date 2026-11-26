@@ -5,7 +5,7 @@ import allure
 import pytest
 
 from function.api_client import create_client, request
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.settings import get_environment
 from function.trade_run import raw_amount
 from function.trade_state import BOOK
@@ -13,7 +13,7 @@ from function.trade_state import BOOK
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("Orderbook 盘口"),
+    allure.suite(ordered_suite_name("Orderbook 盘口")),
     allure.sub_suite("接口契约"),
     allure.epic(PROJECT_NAME),
     allure.feature("Orderbook 盘口"),

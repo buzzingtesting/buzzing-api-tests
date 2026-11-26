@@ -8,14 +8,14 @@ from function.market import (
     list_market_events,
     select_esports_props_league,
 )
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.response_checks import expect_native
 from function.settings import load_test_data
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("市场"),
+    allure.suite(ordered_suite_name("市场")),
     allure.sub_suite("列表"),
     allure.epic(PROJECT_NAME),
     allure.feature("市场"),

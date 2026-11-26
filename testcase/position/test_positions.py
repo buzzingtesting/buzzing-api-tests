@@ -7,12 +7,12 @@ from function.positions import (
     list_closed_positions,
     list_positions,
 )
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("Position 持仓"),
+    allure.suite(ordered_suite_name("Position 持仓")),
     allure.epic(PROJECT_NAME),
     allure.feature("Position 持仓"),
 ]

@@ -16,13 +16,13 @@ from function.market import (
     list_sports_matches,
 )
 from function.market_account import check_market_account_activity
-from function.reporting import PROJECT_NAME, attach_market_sample
+from function.reporting import PROJECT_NAME, attach_market_sample, ordered_suite_name
 from function.response_checks import expect_json, expect_native
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("市场"),
+    allure.suite(ordered_suite_name("市场")),
     allure.sub_suite("详情"),
     allure.epic(PROJECT_NAME),
     allure.feature("市场"),
