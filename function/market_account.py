@@ -3,6 +3,7 @@ import allure
 from function.orders import list_orders
 from function.positions import expect_positions_page, list_positions
 from function.response_checks import expect_native
+from function.trade_state import OPEN_STATES
 
 
 def check_market_account_activity(client, market, case):
@@ -34,14 +35,13 @@ def check_market_account_activity(client, market, case):
         allure.attach(str(positions["pagination"]["total"]), "持仓总数", allure.attachment_type.TEXT)
 
     with allure.step(f"查询所选市场 {market['id']} 的本人在挂限价单"):
-        statuses = case["open_order_statuses"]
         orders = expect_native(
             list_orders(
                 client,
                 params={
                     **params,
+                    "view": "open",
                     "order_types": case["order_type"],
-                    "statuses": ",".join(statuses),
                     "position_ids": ",".join(position_ids),
                 },
             ),
@@ -66,7 +66,7 @@ def check_market_account_activity(client, market, case):
                                         "condition_id": {"const": condition_id},
                                         "position_id": {"enum": position_ids},
                                         "order_type": {"const": case["order_type"]},
-                                        "status": {"enum": statuses},
+                                        "status": {"enum": sorted(OPEN_STATES)},
                                     },
                                 },
                             },

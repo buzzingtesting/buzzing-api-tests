@@ -12,18 +12,18 @@ import httpx
 from function.reporting import junit_summary
 
 
-def build_card(summary, outcome, run_url, report_url):
-    label, color = {
-        "success": ("通过", "green"),
-        "failure": ("失败", "red"),
-    }.get(outcome, ("场景未执行", "grey"))
+def build_card(summary, outcome, run_url, report_url, *, report_round=""):
+    label = "测试通过" if outcome == "success" else "完成"
+    title = f"Buzzing Preview 接口自动化 · {label}"
+    if report_round:
+        title += f"（{report_round}）"
     report = f"[下载 Allure 报告]({report_url})" if report_url else "本轮暂无 Allure 报告"
     return {
         "msg_type": "interactive",
         "card": {
             "header": {
-                "title": {"tag": "plain_text", "content": f"Buzzing Preview 接口自动化 · {label}"},
-                "template": color,
+                "title": {"tag": "plain_text", "content": title},
+                "template": "green" if outcome == "success" else "blue",
             },
             "elements": [{
                 "tag": "div",
@@ -54,11 +54,10 @@ def main():
         f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
         f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     )
-    outcome = os.getenv("REPORT_OUTCOME", "")
+    summary = junit_summary(Path("reports"), bold_total=True).replace("失败 ", "未通过 ")
     payload = build_card(
-        junit_summary(Path("reports"), bold_total=True)
-        if outcome in {"success", "failure"} else "本轮暂无用例统计。",
-        outcome, run_url, os.getenv("REPORT_ARTIFACT_URL", ""),
+        summary, os.getenv("REPORT_OUTCOME", ""), run_url, os.getenv("REPORT_ARTIFACT_URL", ""),
+        report_round=os.getenv("REPORT_ROUND", ""),
     )
 
     signing_secret = os.getenv("LARK_SIGNING_SECRET")

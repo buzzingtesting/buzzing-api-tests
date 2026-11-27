@@ -2,7 +2,7 @@ name: Buzzing API scenarios
 
 on:
   schedule:
-    - cron: '0 9 * * *'
+    - cron: '0 18 * * *'
       timezone: Asia/Shanghai
   workflow_dispatch:
     inputs:
@@ -14,7 +14,7 @@ on:
           - prod
         default: preview
       access_only:
-        description: Only verify API access
+        description: Production API access only (clear for M06 Rewards)
         type: boolean
         default: true
       suite:
@@ -48,23 +48,65 @@ on:
         description: Previous GitHub Actions run ID containing the M06 journal (optional)
         type: string
         required: false
+      dispute_market_id:
+        description: Preview only — run the dispute regression for this market ID
+        type: string
+        required: false
+      dispute_no_position_market_id:
+        description: Preview only — market where the CI account has no position
+        type: string
+        required: false
+      disputed_market_id:
+        description: Preview only — market already in dispute for the entry eligibility check
+        type: string
+        required: false
 
 permissions:
   contents: read
-  actions: read
+
+concurrency:
+  group: buzzing-${{ inputs.environment || 'preview' }}
+  cancel-in-progress: false
 
 jobs:
   scenarios:
+    if: ${{ inputs.suite != 'm06_rewards' && !inputs.m06_resume_run }}
+    uses: ./.github/workflows/run-scenarios.yml
+    with:
+      environment: ${{ inputs.environment || 'preview' }}
+      access_only: ${{ inputs.access_only == true }}
+      dispute_market_id: ${{ inputs.dispute_market_id || '' }}
+      dispute_no_position_market_id: ${{ inputs.dispute_no_position_market_id || '' }}
+      disputed_market_id: ${{ inputs.disputed_market_id || '' }}
+    secrets: inherit
+
+  retry:
+    name: Preview retry
+    needs: scenarios
+    if: >-
+      ${{ !cancelled() && github.run_attempt == '1' &&
+          (inputs.environment || 'preview') == 'preview' &&
+          !inputs.dispute_market_id && !inputs.dispute_no_position_market_id && !inputs.disputed_market_id &&
+          needs.scenarios.outputs.retry_cases != '' }}
+    uses: ./.github/workflows/run-scenarios.yml
+    with:
+      environment: preview
+      retry: true
+      retry_cases: ${{ needs.scenarios.outputs.retry_cases }}
+    secrets: inherit
+
+  m06_rewards:
+    name: Preview M06 Rewards
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.suite == 'm06_rewards' || inputs.m06_resume_run) }}
     runs-on: ${{ vars.BUZZING_RUNNER_LABEL || 'ubuntu-latest' }}
     timeout-minutes: 10
-    concurrency:
-      group: buzzing-${{ inputs.environment || 'preview' }}
-      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
     env:
       BUZZING_ENV: ${{ inputs.environment || 'preview' }}
     steps:
       - name: Verify M06 selection
-        if: ${{ inputs.suite == 'm06_rewards' || inputs.m06_resume_run }}
         shell: bash
         env:
           M06_SUITE: ${{ inputs.suite }}
@@ -72,9 +114,16 @@ jobs:
           M06_OPERATION: ${{ inputs.m06_operation }}
           M06_SCENE_VERSION: ${{ inputs.m06_scene_version }}
           M06_RESUME_RUN: ${{ inputs.m06_resume_run }}
+          DISPUTE_MARKET_ID: ${{ inputs.dispute_market_id }}
+          DISPUTE_NO_POSITION_MARKET_ID: ${{ inputs.dispute_no_position_market_id }}
+          DISPUTED_MARKET_ID: ${{ inputs.disputed_market_id }}
         run: |
           if [[ "$M06_SUITE" != m06_rewards || "$BUZZING_ENV" != preview || "$M06_ACCESS_ONLY" == true ]]; then
-            echo '::error::M06 Rewards requires Preview and login mode (clear Only verify API access).'
+            echo '::error::M06 Rewards requires Preview and login mode (clear access_only).'
+            exit 1
+          fi
+          if [[ -n "$DISPUTE_MARKET_ID$DISPUTE_NO_POSITION_MARKET_ID$DISPUTED_MARKET_ID" ]]; then
+            echo '::error::Leave the dispute market inputs blank when running M06 Rewards.'
             exit 1
           fi
           if [[ "$M06_OPERATION" != inspect && "$GITHUB_RUN_ATTEMPT" != 1 ]]; then
@@ -104,44 +153,8 @@ jobs:
         run: |
           mkdir -p reports
           python -m function.preview_access 2>&1 | tee reports/api-access.log
-      - uses: actions/setup-java@v5
-        if: ${{ !inputs.access_only && inputs.suite != 'm06_rewards' }}
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Install Allure CLI
-        if: ${{ !inputs.access_only && inputs.suite != 'm06_rewards' }}
-        shell: bash
-        run: |
-          allure_version=2.34.0
-          curl --fail --silent --show-error --location --max-time 90 \
-            "https://github.com/allure-framework/allure2/releases/download/${allure_version}/allure-${allure_version}.tgz" \
-            --output "$RUNNER_TEMP/allure.tgz"
-          tar -xzf "$RUNNER_TEMP/allure.tgz" -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/allure-${allure_version}/bin" >> "$GITHUB_PATH"
-      - name: Run scenario tests
-        id: scenario_tests
-        if: ${{ !inputs.access_only && inputs.suite != 'm06_rewards' }}
-        shell: bash
-        env:
-          PYTEST_ADDOPTS: -p no:cacheprovider
-          BUZZING_TESTDATA: ${{ env.BUZZING_ENV == 'prod' && 'prod_testdata' || vars.BUZZING_PREVIEW_TESTDATA || 'ci_tester' }}
-          BUZZING_GMAIL_APP_PASSWORD: ${{ env.BUZZING_ENV == 'preview' && secrets.BUZZING_GMAIL_APP_PASSWORD || '' }}
-          BUZZING_GMAIL_APP_PASSWORD_CI: ${{ env.BUZZING_ENV == 'preview' && secrets.BUZZING_GMAIL_APP_PASSWORD_CI || '' }}
-          BUZZING_PROD_GMAIL_APP_PASSWORD: ${{ env.BUZZING_ENV == 'prod' && secrets.BUZZING_PROD_GMAIL_APP_PASSWORD || '' }}
-          MAILOSAUR_SERVER_ID: ${{ env.BUZZING_ENV == 'preview' && vars.MAILOSAUR_SERVER_ID || '' }}
-          MAILOSAUR_API_KEY: ${{ env.BUZZING_ENV == 'preview' && secrets.MAILOSAUR_API_KEY || '' }}
-          PROD_MAILOSAUR_SERVER_ID: ${{ env.BUZZING_ENV == 'prod' && vars.PROD_MAILOSAUR_SERVER_ID || '' }}
-          PROD_MAILOSAUR_API_KEY: ${{ env.BUZZING_ENV == 'prod' && secrets.PROD_MAILOSAUR_API_KEY || '' }}
-          BUZZING_PROD_PRIVY_APP_ID: ${{ vars.BUZZING_PROD_PRIVY_APP_ID }}
-          BUZZING_PROD_PRIVY_CLIENT_ID: ${{ vars.BUZZING_PROD_PRIVY_CLIENT_ID }}
-        run: |
-          allure --version
-          cache_dir="$(mktemp -d "$RUNNER_TEMP/buzzing-auth-XXXXXX")"
-          trap 'rm -rf -- "$cache_dir"' EXIT
-          BUZZING_AUTH_CACHE_DIR="$cache_dir" python run.py --allow-test-failures
       - name: Verify M06 journal source
-        if: ${{ inputs.suite == 'm06_rewards' && inputs.m06_resume_run }}
+        if: ${{ inputs.m06_resume_run != '' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -163,7 +176,7 @@ jobs:
               sys.exit("Resume requires a completed manual run of this workflow on the same branch and repository.")
           '
       - name: Restore M06 journal
-        if: ${{ inputs.suite == 'm06_rewards' && inputs.m06_resume_run }}
+        if: ${{ inputs.m06_resume_run != '' }}
         uses: actions/download-artifact@v8
         with:
           name: m06-date-test
@@ -172,7 +185,6 @@ jobs:
           run-id: ${{ inputs.m06_resume_run }}
       - name: Check M06 Rewards with the tester1 session
         id: m06_rewards
-        if: ${{ !inputs.access_only && inputs.suite == 'm06_rewards' && env.BUZZING_ENV == 'preview' }}
         shell: bash
         env:
           BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
@@ -214,14 +226,6 @@ jobs:
           name: m06-date-test
           path: reports/m06-date-test/
           if-no-files-found: error
-      - name: Upload Allure HTML
-        id: allure_report
-        if: ${{ !cancelled() && steps.scenario_tests.outcome != 'skipped' && hashFiles('reports/allure-report/index.html') != '' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.BUZZING_ENV }}-allure-report
-          path: reports/allure-report/index.html
-          if-no-files-found: error
       - name: Upload logs and reports
         if: always()
         uses: actions/upload-artifact@v7
@@ -229,22 +233,4 @@ jobs:
           name: ${{ env.BUZZING_ENV }}-scenarios
           path: |
             reports/api-access.log
-            reports/run-*/
             reports/m06-rewards.*
-      - name: Email the Preview report
-        if: ${{ !cancelled() && !inputs.access_only && inputs.suite != 'm06_rewards' && env.BUZZING_ENV == 'preview' }}
-        env:
-          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD_CI }}
-          BUZZING_REPORT_FROM: ${{ vars.BUZZING_REPORT_FROM }}
-          BUZZING_REPORT_TO: ${{ vars.BUZZING_REPORT_TO }}
-          REPORT_OUTCOME: ${{ steps.scenario_tests.outputs.test_outcome || steps.scenario_tests.outcome }}
-          REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
-        run: python -m function.email_report
-      - name: Post the Preview report to Lark
-        if: ${{ !cancelled() && !inputs.access_only && inputs.suite != 'm06_rewards' && env.BUZZING_ENV == 'preview' }}
-        env:
-          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
-          LARK_SIGNING_SECRET: ${{ secrets.LARK_SIGNING_SECRET }}
-          REPORT_OUTCOME: ${{ steps.scenario_tests.outputs.test_outcome || steps.scenario_tests.outcome }}
-          REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
-        run: python -m function.lark_report

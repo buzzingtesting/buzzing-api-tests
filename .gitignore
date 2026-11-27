@@ -8,3 +8,5 @@ reports/
 .env.*
 !.env.example
 *.har
+privy_signer/node_modules/
+privy_signer/build/

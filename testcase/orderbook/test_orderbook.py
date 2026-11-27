@@ -7,15 +7,16 @@ from function.market import (
     load_binary_orderbook_market,
 )
 from function.market_account import check_market_account_activity
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.response_checks import expect_native
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("盘口与 Orderbook"),
+    allure.suite(ordered_suite_name("Orderbook 盘口")),
+    allure.sub_suite("盘口与深度"),
     allure.epic(PROJECT_NAME),
-    allure.feature("盘口与 Orderbook"),
+    allure.feature("Orderbook 盘口"),
 ]
 
 DEPTH_LEVELS_SCHEMA = {

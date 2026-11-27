@@ -1,16 +1,21 @@
+from uuid import uuid4
+
 import allure
 
 from function.identity import get_session_user_id
 from function.orders import list_orders
-from function.reporting import PROJECT_NAME
+from function.reporting import PROJECT_NAME, ordered_suite_name
 from function.response_checks import expect_native
+from function.trade_contract import require_no_order
+from function.trade_run import raw_amount
 
 
 pytestmark = [
     allure.parent_suite(PROJECT_NAME),
-    allure.suite("订单查询"),
+    allure.suite(ordered_suite_name("限价单")),
+    allure.sub_suite("历史查询"),
     allure.epic(PROJECT_NAME),
-    allure.feature("订单查询"),
+    allure.feature("限价单"),
 ]
 
 
@@ -36,6 +41,23 @@ def test_order_history(authenticated_api_client, test_data):
             )
             assert next_page["items"], "首页标记有后续订单，下一页应有记录"
             assert _order_ids(first_page).isdisjoint(_order_ids(next_page)), "相邻两页返回了重复订单"
+
+
+@allure.title("自营订单历史 · 校验成交字段与不存在的逻辑单号")
+def test_orderbook_history_and_logical_id_filter(authenticated_api_client, test_data):
+    client = authenticated_api_client
+    uid = get_session_user_id(client)
+    case = test_data["market_cases"]["order_history"]
+    params = {**case["params"], "source": "orderbook"}
+
+    with allure.step("查询本人自营订单历史并校验原始成交金额和份额"):
+        page = _check_history_page(client, uid, params, case["terminal_statuses"])
+        for item in page["items"]:
+            for field in ("quantity", "filled_quantity", "remaining_quantity", "filled_quote"):
+                raw_amount(item["order"][field])
+
+    with allure.step("按不存在的逻辑单号查询并校验空结果"):
+        require_no_order(client, params["source"], str(uuid4()))
 
 
 def _check_history_page(client, user_id, params, terminal_statuses):

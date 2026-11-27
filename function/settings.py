@@ -12,7 +12,7 @@ WEB_ORIGINS = {
     "preview": "https://preview.buzzing.app",
     "prod": "https://www.buzzing.app",
 }
-DEFAULT_TESTDATA = {"preview": "tester1", "prod": "prod_testdata"}
+DEFAULT_TESTDATA = {"preview": "ci_tester", "prod": "prod_testdata"}
 DATA_FILE = Path(__file__).resolve().parents[1] / "ci.yaml"
 
 
@@ -27,13 +27,25 @@ def get_environment():
     return environment
 
 
-def get_testdata(account_name=None):
+def full_preview_required():
+    return get_environment() == "preview" and os.getenv("BUZZING_REQUIRE_FULL_PREVIEW") == "1"
+
+
+def get_testdata():
     environment = get_environment()
-    if account_name is None:
-        account_name = os.getenv("BUZZING_TESTDATA", DEFAULT_TESTDATA[environment])
+    account_name = os.getenv("BUZZING_TESTDATA", DEFAULT_TESTDATA[environment])
     if environment == "preview" and account_name == "testdata1":
         return "tester1"
     return account_name
+
+
+def get_test_account(test_data):
+    name = get_testdata()
+    account = test_data.get(name) if isinstance(test_data, dict) else None
+    if not isinstance(account, dict) or name == "market_cases":
+        raise ValueError(f"ci.yaml 中没有账号 {name}")
+    check_account_environment(account)
+    return name, account
 
 
 def check_account_environment(account):

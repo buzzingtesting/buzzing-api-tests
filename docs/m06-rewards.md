@@ -14,7 +14,7 @@
 
 ### GitHub Actions 登录模式
 
-在现有 **Buzzing API scenarios** 工作流手动选择 `preview`，取消勾选 **Only verify API access**，选择 `suite=m06_rewards`。M06 使用仓库的 `BUZZING_GMAIL_APP_PASSWORD` 和 `tester1` 登录，复用本轮用户会话。 [GitHub Actions 工作流](https://github.com/buzzingtesting/buzzing-api-tests/actions/workflows/check-framework.yml)
+在现有 **Buzzing API scenarios** 工作流手动选择 `preview` 和 `suite=m06_rewards`，取消勾选 `access_only`，三个争议市场 ID 留空。M06 使用仓库的 `BUZZING_GMAIL_APP_PASSWORD` 和 `tester1` 登录，复用本轮用户会话。 [GitHub Actions 工作流](https://github.com/buzzingtesting/buzzing-api-tests/actions/workflows/check-framework.yml)
 
 | `m06_operation` | 运行内容 |
 | --- | --- |

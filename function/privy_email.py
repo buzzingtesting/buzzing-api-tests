@@ -8,8 +8,7 @@ from function.response_checks import expect_native
 from function.settings import WEB_ORIGINS, get_environment
 
 
-def create_privy_client():
-    """使用当前环境的 Privy 应用发送和验证验证码。"""
+def privy_app_config():
     environment = get_environment()
     app_id = "cmhlogpua008ll20cgyvimcsj"
     client_id = "client-WY6SV4h82eW49szjZVqkK4NnyfkDHL1gXViXuCxF6jiyE"
@@ -18,13 +17,19 @@ def create_privy_client():
         client_id = os.getenv("BUZZING_PROD_PRIVY_CLIENT_ID", "").strip()
         if not app_id:
             raise ValueError("请配置 BUZZING_PROD_PRIVY_APP_ID 后再运行生产登录")
+    return {"appId": app_id, "clientId": client_id}
+
+
+def create_privy_client():
+    """使用当前环境的 Privy 应用发送和验证验证码。"""
+    config = privy_app_config()
     headers = {
-        "origin": WEB_ORIGINS[environment],
-        "privy-app-id": app_id,
+        "origin": WEB_ORIGINS[get_environment()],
+        "privy-app-id": config["appId"],
         "privy-ca-id": str(uuid4()),
     }
-    if client_id:
-        headers["privy-client-id"] = client_id
+    if config["clientId"]:
+        headers["privy-client-id"] = config["clientId"]
     return httpx.Client(
         base_url="https://auth.privy.io",
         timeout=10.0,
