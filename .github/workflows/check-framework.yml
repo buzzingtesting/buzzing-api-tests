@@ -21,8 +21,8 @@ on:
         description: Preview only — run the dispute regression for this market ID
         type: string
         required: false
-      dispute_no_position_account:
-        description: Account alias from ci.yaml with no position in the selected market
+      dispute_no_position_market_id:
+        description: Preview only — market where the CI account has no position
         type: string
         required: false
       disputed_market_id:
@@ -33,172 +33,32 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: buzzing-${{ inputs.environment || 'preview' }}
+  cancel-in-progress: false
+
 jobs:
   scenarios:
-    runs-on: ${{ vars.BUZZING_RUNNER_LABEL || 'ubuntu-latest' }}
-    timeout-minutes: 20
-    concurrency:
-      group: buzzing-${{ inputs.environment || 'preview' }}
-      cancel-in-progress: false
-    env:
-      BUZZING_ENV: ${{ inputs.environment || 'preview' }}
-      BUZZING_DISPUTE_MARKET_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.dispute_market_id || '' }}
-      BUZZING_DISPUTE_NO_POSITION_ACCOUNT: ${{ github.event_name == 'workflow_dispatch' && inputs.dispute_no_position_account || '' }}
-      BUZZING_DISPUTED_MARKET_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.disputed_market_id || '' }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt
-      - name: Check API access
-        shell: bash
-        run: |
-          if [[ -n "$BUZZING_DISPUTE_NO_POSITION_ACCOUNT" && -z "$BUZZING_DISPUTE_MARKET_ID" ]]; then
-            echo 'dispute_no_position_account requires dispute_market_id.' >&2
-            exit 1
-          fi
-          for market_id in "$BUZZING_DISPUTE_MARKET_ID" "$BUZZING_DISPUTED_MARKET_ID"; do
-            if [[ -n "$market_id" && ( "$BUZZING_ENV" != preview || ! "$market_id" =~ ^[1-9][0-9]*$ ) ]]; then
-              echo 'dispute_market_id and disputed_market_id require Preview and positive integer IDs.' >&2
-              exit 1
-            fi
-          done
-          mkdir -p reports
-          python -m function.preview_access 2>&1 | tee reports/api-access.log
-      - uses: actions/setup-java@v5
-        if: ${{ env.BUZZING_ENV == 'preview' || !inputs.access_only }}
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Install Allure CLI
-        if: ${{ env.BUZZING_ENV == 'preview' || !inputs.access_only }}
-        shell: bash
-        run: |
-          allure_version=2.34.0
-          curl --fail --silent --show-error --location --max-time 90 \
-            "https://github.com/allure-framework/allure2/releases/download/${allure_version}/allure-${allure_version}.tgz" \
-            --output "$RUNNER_TEMP/allure.tgz"
-          tar -xzf "$RUNNER_TEMP/allure.tgz" -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/allure-${allure_version}/bin" >> "$GITHUB_PATH"
-      - name: Run scenario tests
-        id: scenario_tests
-        if: ${{ env.BUZZING_ENV == 'preview' || !inputs.access_only }}
-        shell: bash
-        env:
-          PYTEST_ADDOPTS: -p no:cacheprovider
-          BUZZING_B3_FIXTURES: ${{ env.BUZZING_ENV == 'preview' && vars.BUZZING_B3_FIXTURES || '' }}
-          BUZZING_OWN_PARTIAL_ACCOUNT: ${{ vars.BUZZING_OWN_PARTIAL_ACCOUNT }}
-          BUZZING_OWN_PARTIAL_MAX_BUDGET_RAW: ${{ vars.BUZZING_OWN_PARTIAL_MAX_BUDGET_RAW }}
-          BUZZING_TRADE_BACKEND: ${{ vars.BUZZING_TRADE_BACKEND }}
-          PREVIEW_QA_PRIVY_APP_ID: ${{ vars.PREVIEW_QA_PRIVY_APP_ID }}
-          PREVIEW_QA_GMAIL_CLOUD_ACCESS_TOKEN: ${{ env.BUZZING_ENV == 'preview' && secrets.PREVIEW_QA_GMAIL_CLOUD_ACCESS_TOKEN || '' }}
-          BUZZING_TESTDATA: ${{ env.BUZZING_ENV == 'prod' && 'prod_testdata' || vars.BUZZING_PREVIEW_TESTDATA || 'ci_tester' }}
-          BUZZING_GMAIL_APP_PASSWORD: ${{ env.BUZZING_ENV == 'preview' && secrets.BUZZING_GMAIL_APP_PASSWORD || '' }}
-          BUZZING_GMAIL_APP_PASSWORD_CI: ${{ env.BUZZING_ENV == 'preview' && secrets.BUZZING_GMAIL_APP_PASSWORD_CI || '' }}
-          BUZZING_PROD_GMAIL_APP_PASSWORD: ${{ env.BUZZING_ENV == 'prod' && secrets.BUZZING_PROD_GMAIL_APP_PASSWORD || '' }}
-          MAILOSAUR_SERVER_ID: ${{ env.BUZZING_ENV == 'preview' && vars.MAILOSAUR_SERVER_ID || '' }}
-          MAILOSAUR_API_KEY: ${{ env.BUZZING_ENV == 'preview' && secrets.MAILOSAUR_API_KEY || '' }}
-          PROD_MAILOSAUR_SERVER_ID: ${{ env.BUZZING_ENV == 'prod' && vars.PROD_MAILOSAUR_SERVER_ID || '' }}
-          PROD_MAILOSAUR_API_KEY: ${{ env.BUZZING_ENV == 'prod' && secrets.PROD_MAILOSAUR_API_KEY || '' }}
-          BUZZING_PROD_PRIVY_APP_ID: ${{ vars.BUZZING_PROD_PRIVY_APP_ID }}
-          BUZZING_PROD_PRIVY_CLIENT_ID: ${{ vars.BUZZING_PROD_PRIVY_CLIENT_ID }}
-        run: |
-          allure --version
-          cache_dir="$(mktemp -d "$RUNNER_TEMP/buzzing-auth-XXXXXX")"
-          trap 'rm -rf -- "$cache_dir"' EXIT
-          export BUZZING_AUTH_CACHE_DIR="$cache_dir"
-          dispute_args=()
-          if [[ -n "$BUZZING_DISPUTE_MARKET_ID" ]]; then
-            dispute_args+=(--dispute-market-id "$BUZZING_DISPUTE_MARKET_ID")
-          fi
-          if [[ -n "$BUZZING_DISPUTED_MARKET_ID" ]]; then
-            dispute_args+=(--disputed-market-id "$BUZZING_DISPUTED_MARKET_ID")
-          fi
-          if (( ${#dispute_args[@]} )); then
-            python run.py --allow-test-failures "${dispute_args[@]}"
-            exit $?
-          fi
-          trade_args=()
-          if [[ "$BUZZING_ENV" == preview && "$GITHUB_RUN_ATTEMPT" == 1 ]]; then
-            python - "$cache_dir" >> "$GITHUB_OUTPUT" <<'PY'
-          import json
-          import os
-          import sys
-          from datetime import datetime, timedelta, timezone
-          from pathlib import Path
-          from uuid import uuid4
+    uses: ./.github/workflows/run-scenarios.yml
+    with:
+      environment: ${{ inputs.environment || 'preview' }}
+      access_only: ${{ inputs.access_only == true }}
+      dispute_market_id: ${{ inputs.dispute_market_id || '' }}
+      dispute_no_position_market_id: ${{ inputs.dispute_no_position_market_id || '' }}
+      disputed_market_id: ${{ inputs.disputed_market_id || '' }}
+    secrets: inherit
 
-          from function.trade_run import CI_TRADE_ACCOUNT, CI_TRADE_BUDGETS_RAW, CI_TRADE_SCENARIOS
-          from function.trade_run import LIMIT_PARTIAL_CANCEL, TRADE_SHAPES, TradeRun
-
-          root = Path(sys.argv[1])
-          start = datetime.now(timezone.utc)
-          journal_paths = []
-          for index, scenario in enumerate(CI_TRADE_SCENARIOS):
-              manifest = root / f"trade-{index:02}.json"
-              budget = CI_TRADE_BUDGETS_RAW[scenario]
-              side, order_type = TRADE_SHAPES[scenario]
-              manifest.write_text(json.dumps({
-                  "run_id": str(uuid4()), "environment": "preview", "account": CI_TRADE_ACCOUNT,
-                  "start": start.isoformat(), "end": (start + timedelta(minutes=20)).isoformat(),
-                  "scenario": scenario, "venue": "polymarket", "funding": "cash",
-                  "side": side, "order_type": order_type, "budget_raw": str(budget),
-              }), encoding="utf-8")
-              journal_paths.append(f"reports/trade-runs/{TradeRun.from_file(manifest).run_id}*.jsonl")
-          if cap := os.environ.get("BUZZING_OWN_PARTIAL_MAX_BUDGET_RAW"):
-              manifest = root / f"trade-{len(CI_TRADE_SCENARIOS):02}.json"
-              manifest.write_text(json.dumps({
-                  "run_id": str(uuid4()), "environment": "preview", "venue": "buzzing",
-                  "account": os.environ.get("BUZZING_OWN_PARTIAL_ACCOUNT", ""),
-                  "start": start.isoformat(), "end": (start + timedelta(minutes=20)).isoformat(),
-                  "scenario": LIMIT_PARTIAL_CANCEL, "funding": "cash", "side": "BUY", "order_type": "LIMIT",
-                  "max_budget_raw": cap,
-              }), encoding="utf-8")
-              journal_paths.append(f"reports/trade-runs/{TradeRun.from_file(manifest).run_id}*.jsonl")
-          print("trade_journal<<TRADE_JOURNALS", *journal_paths, "TRADE_JOURNALS", sep="\n")
-          PY
-            for manifest in "$cache_dir"/trade-*.json; do
-              trade_args+=(--trade-run "$manifest")
-            done
-          elif [[ "$BUZZING_ENV" == preview ]]; then
-            echo 'A retry of this workflow runs the regular scenarios without submitting a new trade order.'
-          fi
-          python run.py --allow-test-failures "${trade_args[@]}"
-      - name: Upload Allure HTML
-        id: allure_report
-        if: ${{ !cancelled() && steps.scenario_tests.outcome != 'skipped' && hashFiles('reports/allure-report/index.html') != '' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.BUZZING_ENV }}-allure-report
-          path: reports/allure-report/index.html
-          if-no-files-found: error
-      - name: Upload logs and reports
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.BUZZING_ENV }}-scenarios
-          path: |
-            reports/api-access.log
-            reports/run-*/
-            ${{ steps.scenario_tests.outputs.trade_journal }}
-      - name: Email the Preview report
-        if: ${{ !cancelled() && env.BUZZING_ENV == 'preview' && env.BUZZING_DISPUTE_MARKET_ID == '' && env.BUZZING_DISPUTED_MARKET_ID == '' && steps.scenario_tests.outcome != 'skipped' }}
-        env:
-          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD_CI }}
-          BUZZING_REPORT_FROM: ${{ vars.BUZZING_REPORT_FROM }}
-          BUZZING_REPORT_TO: ${{ vars.BUZZING_REPORT_TO }}
-          REPORT_OUTCOME: ${{ steps.scenario_tests.outputs.test_outcome || steps.scenario_tests.outcome }}
-          REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
-        run: python -m function.email_report
-      - name: Post the Preview report to Lark
-        if: ${{ !cancelled() && env.BUZZING_ENV == 'preview' && env.BUZZING_DISPUTE_MARKET_ID == '' && env.BUZZING_DISPUTED_MARKET_ID == '' && steps.scenario_tests.outcome != 'skipped' }}
-        env:
-          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
-          LARK_SIGNING_SECRET: ${{ secrets.LARK_SIGNING_SECRET }}
-          REPORT_OUTCOME: ${{ steps.scenario_tests.outputs.test_outcome || steps.scenario_tests.outcome }}
-          REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
-        run: python -m function.lark_report
+  retry:
+    name: Preview retry
+    needs: scenarios
+    if: >-
+      ${{ !cancelled() && github.run_attempt == '1' &&
+          (inputs.environment || 'preview') == 'preview' &&
+          !inputs.dispute_market_id && !inputs.dispute_no_position_market_id && !inputs.disputed_market_id &&
+          needs.scenarios.outputs.retry_cases != '' }}
+    uses: ./.github/workflows/run-scenarios.yml
+    with:
+      environment: preview
+      retry: true
+      retry_cases: ${{ needs.scenarios.outputs.retry_cases }}
+    secrets: inherit

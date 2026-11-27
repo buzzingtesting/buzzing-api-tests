@@ -1,11 +1,12 @@
 import json
 import os
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from re import fullmatch
 from time import time
 from uuid import UUID
 
+import allure
 import pytest
 
 from function.api_client import create_client, request
@@ -14,12 +15,23 @@ from function.market import get_market_event_detail, list_event_markets
 from function.orders import list_orders
 from function.polymarket_trade import market_closed_reason, read_btc_trade_wallet
 from function.response_checks import expect_json
-from function.settings import get_environment, load_test_data
-from function.trade_run import price_amount, raw_amount, timestamp
+from function.settings import full_preview_required, get_environment, get_test_account, load_test_data
+from function.trade_market import select_cash_plan_market
+from function.trade_run import BUY_BUDGET_RAW, price_amount, raw_amount, timestamp
 from function.trade_state import BOOK
 
 
 FIXTURES_ENV = "BUZZING_B3_FIXTURES"
+
+
+def attach_evidence(evidence, title="交易契约核对"):
+    allure.attach(json.dumps(evidence, ensure_ascii=False, indent=2), title, allure.attachment_type.JSON)
+
+
+def unavailable_trade_fixture(reason):
+    if full_preview_required():
+        pytest.fail(reason, pytrace=False)
+    pytest.skip(reason)
 
 
 def expect_trade_problem(response, *, status, reason, biz_code):
@@ -42,24 +54,28 @@ class TradeFixture:
         fixtures = json.loads(os.getenv(FIXTURES_ENV) or "{}")
         if not isinstance(fixtures, dict):
             raise ValueError(f"{FIXTURES_ENV} 应为 JSON 对象")
-        if case not in fixtures:
-            pytest.skip(f"缺少 Preview 专用数据 {FIXTURES_ENV}.{case}")
-        spec = fixtures[case]
         self.case = case
         self.venue = "polymarket" if case.startswith("polymarket_") else "buzzing"
         self.source = "polymarket" if self.venue == "polymarket" else "orderbook"
-        self.account = spec["account"]
-        self.uid = str(spec["uid"])
+        if case not in fixtures:
+            if case != "buzzing_plan" or not full_preview_required():
+                unavailable_trade_fixture(f"缺少 Preview 专用数据 {FIXTURES_ENV}.{case}")
+            self.spec = None
+            self.start = datetime.now(timezone.utc)
+            self.end = self.start + timedelta(minutes=5)
+            self.budget_raw = BUY_BUDGET_RAW
+            return
+        spec = fixtures[case]
         self.event_id = str(spec["event_id"])
         self.market_id = str(spec["market_id"])
         self.outcome = spec["outcome"].upper()
         self.start, self.end = timestamp(spec["start"]), timestamp(spec["end"])
         self.price = price_amount(spec["price"])
         self.budget_raw = raw_amount(spec["budget_raw"])
-        if (not all(fullmatch(r"[1-9][0-9]*", value) for value in (self.uid, self.event_id, self.market_id))
+        if (not all(fullmatch(r"[1-9][0-9]*", value) for value in (self.event_id, self.market_id))
                 or self.outcome not in {"YES", "NO", "UP", "DOWN"} or not 0 < self.budget_raw <= 3_000_000
                 or self.start >= self.end):
-            raise ValueError(f"{case} 的身份、市场、预算或执行窗口配置无效")
+            raise ValueError(f"{case} 的市场、预算或执行窗口配置无效")
         if case in {"polymarket_credit", "polymarket_mixed"}:
             batches = spec.get("batch_ids")
             if (not isinstance(batches, list) or not batches
@@ -71,22 +87,24 @@ class TradeFixture:
 
     def check_window(self):
         if not self.start <= datetime.now(timezone.utc) < self.end:
-            pytest.skip(f"当前时间不在 {self.case} 获准窗口内")
+            unavailable_trade_fixture(f"当前时间不在 {self.case} 获准窗口内")
 
     @contextmanager
     def connect(self):
-        account = load_test_data().get(self.account)
-        if not isinstance(account, dict) or account.get("environment") != "preview" or not account.get("email"):
-            raise ValueError(f"{self.case} 需要已配置邮箱自动登录的 Preview 专用账号")
-        token = get_test_jwt(self.account, account)
+        name, account = get_test_account(load_test_data())
+        allure.dynamic.parameter("测试账号", name)
+        token = get_test_jwt(name, account)
         with create_client(token) as client:
             uid, signer, maker = read_btc_trade_wallet(client)
-            if uid != self.uid:
-                raise ValueError("登录 UID 与专用测试数据不一致")
+            if "expected_uid" in account and uid != str(account["expected_uid"]):
+                raise ValueError("交易钱包 UID 与 CI 测试账号不一致")
             client.headers["X-Wallet-Address"] = maker
-            yield client, signer, maker
+            yield client, uid, signer, maker
 
     def select_market(self, client):
+        if self.spec is None:
+            page_size = load_test_data()["market_cases"]["home_list"]["page_size"]
+            return select_cash_plan_market(client, {"sort_by": "volume", "page_size": page_size}, self.budget_raw)
         selected = read_scoped_market(client, self.source, self.event_id, self.market_id, self.outcome)
         return dict(selected, limit_price=str(self.price))
 
@@ -94,7 +112,7 @@ class TradeFixture:
         self.check_window()
         return request(client, "POST", BOOK + "orders/prepare", operation=f"prepare_{self.case}", json={
             "total_budget": str(self.budget_raw), "venue": self.venue, "side": "BUY",
-            "order_type": "LIMIT", "price": str(self.price),
+            "order_type": "LIMIT", "price": selected["limit_price"],
             "condition_id": selected["condition_id"], "token_id": selected["position_id"],
             "use_credit": use_credit, "is_neg_risk": selected["neg_risk"], "signer_address": signer,
             "maker_address": maker, "signature_type": 2, "expiration": str(int(time()) + 300),
@@ -118,7 +136,7 @@ def read_scoped_market(client, source, event_id, market_id, outcome):
     if market.get("market_end_date"):
         end_time = min(end_time, int(timestamp(market["market_end_date"]).timestamp()))
     if (reason := market_closed_reason(market)) or end_time <= time():
-        pytest.skip(f"专用市场 {market_id} 已停止交易（{reason or '已达到结束时间'}）")
+        unavailable_trade_fixture(f"专用市场 {market_id} 已停止交易（{reason or '已达到结束时间'}）")
     neg_risk = event.get("neg_risk")
     if type(neg_risk) is not bool:
         raise ValueError("专用事件缺少有效的 neg_risk")

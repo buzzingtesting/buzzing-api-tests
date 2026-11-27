@@ -5,7 +5,7 @@
 | 链路和场景 | 优先级 / 范围 / 套件 | 场所、资金及签名 | HTTP 方法与路径 | 验收证据与当前状态 |
 |---|---|---|---|---|
 | M04-01 市价买入与两段卖出 | P0 / 必交 / C | Polymarket、Cash、代签 | POST `/api/v1/orderbook/orders/prepare`、`/api/v1/orderbook/orders/submit`，GET `/api/v1/orderbook/orders`、`/api/v1/orderbook/positions` | 一次买入与两次卖出的独立订单、成交、历史、卖出后持仓。已有本地闭环证据，待当前版本 GitHub Actions 独立复验。 |
-| M04-02 限价成交 | P0 / 必交 / C | Polymarket、Cash、代签 | POST `/api/v1/orderbook/orders/prepare`、`/api/v1/orderbook/orders/submit`，GET `/api/v1/orderbook/orders` | NBA 限价单全部成交和历史。已有本地实成交，待当前版本 GitHub Actions 独立复验。 |
+| M04-02 限价成交 | P0 / 必交 / C | Polymarket、Cash、代签 | POST `/api/v1/orderbook/orders/prepare`、`/api/v1/orderbook/orders/submit`，GET `/api/v1/orderbook/depth`、`/api/v1/orderbook/orders`、`/api/v1/orderbook/positions` | Preview 实跑买入 25.48 份、分两笔卖出各 12.74 份，卖出成交额合计 2.72636 U，持仓恢复到买入前。 |
 | M04-03 限价挂单撤销 | P0 / 必交 / C | Polymarket、Cash、代签、2 U 含费预算 | POST `/api/v1/orderbook/orders/prepare`、`/api/v1/orderbook/orders/submit`、`/api/v1/orderbook/order/cancel`，GET `/api/v1/orderbook/orders`、`/api/v1/orderbook/buying-power` | Preview 已真实挂单并零成交撤销。限价正确，市场可用 Cash 减少含费占用额并在撤单后恢复。Allure 记录请求 `post_only=true` 与订单回查 `false` 的差异，待后端确认。 |
 | M04-04 限价部分成交后撤销余单 | P0 / 待确认必交 / C | Polymarket、Cash、代签 | POST `/api/v1/orderbook/orders/prepare`、`/api/v1/orderbook/orders/submit`、`/api/v1/orderbook/order/cancel`，GET `/api/v1/orderbook/depth`、`/api/v1/orderbook/orders`、`/api/v1/orderbook/positions` | 限价内对手单只能吃掉部分份额，撤销余量后留存成交、对应持仓和解冻证据。待可控对手单。 |
 | M05-01 同计划重复提交 | P0 / 必交 / C | Polymarket、Cash、代签 | POST `/api/v1/orderbook/orders/submit`，GET `/api/v1/orderbook/orders`、`/api/v1/orderbook/positions`、`/api/v1/profile/funding`、`/api/v1/user/info` | 对本轮成交单重放，验证 `replayed=true`，订单与资金持仓快照一致。Preview 已真实重放，返回 `replayed=true`，无新订单，资金与持仓快照一致。原单历史为 `filled`，按逻辑订单查询为 `pending`，用例保留失败，待后端确认。 |
@@ -23,19 +23,19 @@ Cash 代签覆盖外部场所正常下单，自有 Cash 覆盖客户端签名校
 
 自营部分成交从当轮 Newest 列表选活跃二元盘口，覆盖独立盘口和多市场事件下的非互斥二元子盘口。最新成交价进入报告，买单以当前卖一作为可立即成交的限价。Amount 为卖一价乘该档总份额再加 2 U。程序在提交前复查卖一与数量，并核对扣除预计费用后的计划份额大于该档卖量。提交后以同一逻辑订单确认部分成交，撤销该订单的余单，并对账持仓、扣款、解冻与历史。
 
-该用例复用自营签名 Runner。配置 `BUZZING_OWN_PARTIAL_ACCOUNT`、`BUZZING_OWN_PARTIAL_MAX_BUDGET_RAW` 及现有 `BUZZING_TRADE_BACKEND`，使用钱包已有的交易授权。Preview 已实测动态盘口与客户端签名准备单，完整成交和撤单待配置签名 Runner 实跑。
+该用例走 Preview CI 账号的纯接口代签路径。可用 `BUZZING_OWN_PARTIAL_MAX_BUDGET_RAW` 调整预算上限。统一账号后的成交和撤单需以当轮实跑记录验收。
 
 ## 数据配置
 
-`BUZZING_B3_FIXTURES` 是 GitHub Actions 仓库变量或本地环境变量。只填当前轮次分配的数据，不包含密码、Token 或私钥。配置后，正常顺序自动执行对应场景。未配置或执行窗口未生效时，Allure 记录跳过。交易账号必须已在 `ci.yaml` 配置邮箱登录，凭证通过现有 CI Secrets 注入。
+`BUZZING_B3_FIXTURES` 是 GitHub Actions 仓库变量或本地环境变量。填写当前轮次分配的业务数据。所有场景沿用本轮 CI 账号的邮箱登录，凭证通过现有 CI Secrets 注入，交易 UID 从当前会话读取。
 
-每个场景的通用字段为 `account`、`uid`、`event_id`、`market_id`、`outcome`、小数 `price`、6 位定点字符串 `budget_raw`、带时区的 `start` 与 `end`。事件与子盘口通过详情回查归属，`condition_id` 和交易方向 ID 取详情回包。
+每个场景的通用字段为 `event_id`、`market_id`、`outcome`、小数 `price`、6 位定点字符串 `budget_raw`、带时区的 `start` 与 `end`。事件与子盘口通过详情回查归属，`condition_id` 和交易方向 ID 取详情回包。
 
 | 场景键 | 数据准备 |
 |---|---|
-| `buzzing_plan` | 活跃自有盘口，账号资金可生成一笔 3 U 以内、需用户签名的单腿 Cash 限价计划。选择限价内有足够对手盘的方向。 |
+| `buzzing_plan` | 可选指定活跃自营盘口，预算上限 3 U。全量 Preview 首轮未配置时，从 Volume 选择有足够卖盘与购买力的活跃自营二元盘口，按当轮卖一和 2 U 预算生成计划。缺可用盘口或准备单返回服务端代签时，Allure 记录跳过原因。 |
 | `polymarket_partial` | 专用外部测试盘口和已授权的 Cash 钱包，预置足额 pUSD。额外填 `opposing_shares_raw`，限价内对手单合计必须正好等于这个值且低于本轮订单份额。 |
-| `polymarket_credit` | 已验证的专用账号、有足额且适用于 Polymarket 的 Credit。填本轮允许使用的 `batch_ids` 字符串数组。 |
+| `polymarket_credit` | CI 账号有足额且适用于 Polymarket 的 Credit。填本轮允许使用的 `batch_ids` 字符串数组。 |
 | `polymarket_mixed` | 可用 Credit 低于预算，余额足以覆盖剩余 Cash 腿，钱包已授权代签且现有 pUSD 足够。填 `batch_ids`。 |
 
 两类资金准备单均已在 Preview 核对，订单回查为空，Cash、Credit 和 pUSD 前后快照一致。混合准备单的诊断金额超过日常成交用例上限，仅用于验证分腿。在已分配真实交易窗口、专用盘口限价以内能够全成时，为相应场景设置 `"submit": true`。同一 Actions 运行的重试跳过受控交易。如果提交结果不明，按报告中的逻辑订单 ID 回读订单、持仓和资金，查清前保留该轮数据。

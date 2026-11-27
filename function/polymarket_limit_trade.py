@@ -9,9 +9,10 @@ from function.funds import get_buying_power
 from function.market import get_market_event_detail, get_orderbook_depth, is_open_market_event
 from function.market import iter_market_events, list_event_markets
 from function.orders import list_orders
-from function.polymarket_trade import CONFIRMATION_SECONDS, SOURCE, OrderConfirmationTimeout
+from function.polymarket_trade import CONFIRMATION_SECONDS, SELL_STEP_RAW, SOURCE, OrderConfirmationTimeout
 from function.polymarket_trade import check_cash_buy_capacity, execute_polymarket_order, fill_quantity_raw
 from function.polymarket_trade import market_closed_reason, match_polymarket_order, shares, submit_polymarket_order
+from function.polymarket_trade import ensure_market_trading, read_cash_position, wait_for_cash_position
 from function.response_checks import expect_json
 from function.trade_run import POLYMARKET_NBA_LIMIT_CANCEL, price_amount, raw_amount, timestamp
 from function.trade_state import BOOK
@@ -31,24 +32,30 @@ class NbaLimitFill:
     uid: str
     plan_id: str
     fill: dict
+    position_before_buy_raw: int
 
 
-def read_asks(client, position_id):
+def read_depth_levels(client, position_id, side):
     depth = expect_json(get_orderbook_depth(client, position_id, source=SOURCE), 200)
     if depth.get("position_id") != position_id:
         raise ValueError("盘口深度未返回所选方向")
-    asks = []
-    for row in depth.get("asks") or []:
+    levels = []
+    for row in depth.get(side) or []:
         price = price_amount(row["price"], allow_one=True)
         quantity = Decimal(row["total_qty"])
         if not quantity.is_finite() or quantity < 0:
-            raise ValueError("卖盘数量无效")
+            raise ValueError("盘口数量无效")
         if quantity > 0:
-            asks.append((price, quantity))
-    return asks
+            levels.append((price, quantity))
+    return levels
 
 
-def select_nba_limit_quote(client, record, case, *, budget_raw=None, passive=False, market_ids=(), outcome=""):
+def read_asks(client, position_id):
+    return read_depth_levels(client, position_id, "asks")
+
+
+def select_nba_limit_quote(client, record, case, *, budget_raw=None, passive=False, split_sell=False,
+                           market_ids=(), outcome=""):
     budget = Decimal(shares(budget_raw)) if budget_raw is not None else None
     keyword = case["title_keyword"]
     for event in iter_market_events(client, case["list_params"]):
@@ -81,6 +88,7 @@ def select_nba_limit_quote(client, record, case, *, budget_raw=None, passive=Fal
         tick = Decimal(str(market.get("order_price_min_tick_size") or 0))
         if not minimum.is_finite() or minimum <= 0 or not tick.is_finite() or tick < 0:
             raise ValueError(f"NBA 市场 {market_id} 的最小份额或价格步长无效")
+        required_shares = 2 * minimum.quantize(Decimal("0.01"), rounding=ROUND_CEILING) if split_sell else minimum
         outcomes = (outcome,) if outcome else sample(YES_NO, len(YES_NO))
         for outcome in outcomes:
             token_id = options[outcome]
@@ -91,8 +99,10 @@ def select_nba_limit_quote(client, record, case, *, budget_raw=None, passive=Fal
             best_ask = min(level[0] for level in asks)
             price = best_ask - tick * case["post_only_ticks"] if passive else best_ask
             depth_at_limit = sum(quantity for ask, quantity in asks if ask == price)
-            minimum_budget = (minimum * price * (1 + LIMIT_FEE_RESERVE)).quantize(Decimal("0.01"), rounding=ROUND_CEILING)
-            insufficient = budget is not None and (minimum_budget > budget or (not passive and depth_at_limit < minimum))
+            minimum_budget = (required_shares * price * (1 + LIMIT_FEE_RESERVE)).quantize(
+                Decimal("0.01"), rounding=ROUND_CEILING,
+            )
+            insufficient = budget is not None and (minimum_budget > budget or (not passive and depth_at_limit < required_shares))
             if not 0 < price < 1 or (tick and price % tick) or (passive and price >= best_ask) or insufficient:
                 record(stage="nba_limit_quote_skipped", market_id=market_id, outcome=outcome, limit_price=str(price),
                        minimum_budget=str(minimum_budget), reason="限价或盘口无法满足最小份额和本轮预算")
@@ -109,7 +119,8 @@ def select_nba_limit_quote(client, record, case, *, budget_raw=None, passive=Fal
             selected = dict(event_id=event["id"], title=event["title"], market_id=market_id, market_title=market.get("question"),
                             condition_id=condition_id, position_id=token_id, outcome=outcome, end_time=end_time,
                             limit_price=str(price), best_ask=str(best_ask), minimum_shares=str(minimum),
-                            minimum_budget=str(minimum_budget), depth_shares=str(depth_at_limit),
+                            required_buy_shares=str(required_shares), minimum_budget=str(minimum_budget),
+                            depth_shares=str(depth_at_limit),
                             neg_risk=neg_risk)
             record(stage="market_selected", **selected)
             return selected
@@ -120,19 +131,16 @@ def execute_nba_limit_buy(client, run, uid, signer, maker, record, case):
     passive = run.scenario == POLYMARKET_NBA_LIMIT_CANCEL
     budget = Decimal(shares(run.budget_raw))
     selected = select_nba_limit_quote(client, record, case, budget_raw=run.budget_raw, passive=passive,
-                                      market_ids=run.market_ids, outcome=run.outcome)
+                                      split_sell=not passive, market_ids=run.market_ids, outcome=run.outcome)
     balance_raw = check_cash_buy_capacity(client, run, selected, signer, record)
+    if not passive:
+        position_before, _ = read_cash_position(client, uid, selected)
     price = Decimal(selected["limit_price"])
     payload = dict(side="BUY", total_budget=str(run.budget_raw), price=selected["limit_price"], post_only=passive,
                    expiration=str(int(time()) + LIMIT_EXPIRATION_SECONDS))
     planned_raw = None
     plan_id = None
     estimated_fee = Decimal(0)
-    if passive:
-        cash_before = Decimal(shares(balance_raw))
-        _, pusd_balance = read_withdrawable_cash(client, uid)
-        if pusd_balance < budget:
-            raise ValueError(f"撤单资金对账需要 Polygon 钱包已有 {budget:f} pUSD，当前 {pusd_balance:f} pUSD")
 
     def recheck_depth(plan):
         nonlocal planned_raw, plan_id, estimated_fee
@@ -145,22 +153,20 @@ def execute_nba_limit_buy(client, run, uid, signer, maker, record, case):
         if expected_total > budget + Decimal("0.000001"):
             raise ValueError(f"准备单预计成交额及手续费超过 {budget:f} U 预算")
         at_limit = sum(quantity for ask, quantity in read_asks(client, selected["position_id"]) if ask <= price)
-        if requested < Decimal(selected["minimum_shares"]):
-            raise ValueError("准备单份额低于市场最小值")
+        if requested < Decimal(selected["required_buy_shares"]):
+            raise ValueError("准备单份额不足以满足本轮限价场景")
         if not passive and at_limit < requested:
             raise ValueError("准备单份额低于最小值，或提交前限价内的卖盘已不足")
-        if passive:
-            if at_limit:
-                raise ValueError("盘口已变动，post-only 限价会与卖盘交叉")
-            if pusd_balance < expected_total:
-                raise ValueError("撤单资金对账需要 Polygon 钱包已有足额 pUSD")
+        if passive and at_limit:
+            raise ValueError("盘口已变动，post-only 限价会与卖盘交叉")
         record(stage="nba_limit_depth_checked", **dict(selected, depth_shares=str(at_limit)), requested_shares=shares(planned_raw))
 
     if passive:
         submission = submit_polymarket_order(client, run, signer, maker, record, selected, selected["neg_risk"],
                                               payload, before_submit=recheck_depth)
-        return verify_passive_order_and_cancel(client, uid, selected, record, submission, planned_raw, cash_before,
-                                               estimated_fee)
+        return verify_passive_order_and_cancel(
+            client, uid, selected, record, submission, planned_raw, Decimal(shares(balance_raw)), estimated_fee,
+        )
     fill = execute_polymarket_order(client, run, uid, signer, maker, record, selected, selected["neg_risk"],
                                     payload, before_submit=recheck_depth)
     if fill_quantity_raw(fill) != planned_raw:
@@ -168,8 +174,83 @@ def execute_nba_limit_buy(client, run, uid, signer, maker, record, case):
     if Decimal(fill["filled_quote"]) > price * Decimal(fill["filled_quantity"]) + Decimal("0.000001"):
         raise ValueError(f"订单 {fill['logical_order_id']} 的成交金额超过限价")
     record(stage="nba_limit_buy_confirmed", **selected, **fill, side="BUY", source=SOURCE, order_type="LIMIT",
-           funding_source=run.funding, budget=shares(run.budget_raw), requested_shares=shares(planned_raw))
-    return NbaLimitFill(selected, uid, plan_id, fill)
+           funding_source=run.funding, budget=shares(run.budget_raw), requested_shares=shares(planned_raw),
+           position_before_buy_raw=position_before)
+    return NbaLimitFill(selected, uid, plan_id, fill, position_before)
+
+
+def execute_nba_limit_sell(client, run, uid, signer, maker, record, buy):
+    if uid != buy.uid or buy.fill["status"] != "filled" or buy.fill["onchain_status"] not in {"confirmed", "none"}:
+        raise ValueError("卖出需使用同一账号本轮已确认全成的 NBA 限价买单")
+
+    selected = buy.selected
+    baseline = buy.position_before_buy_raw
+    bought_raw = fill_quantity_raw(buy.fill)
+    remaining = bought_raw
+    sellable_raw = bought_raw // SELL_STEP_RAW * SELL_STEP_RAW
+    half_raw = sellable_raw // (2 * SELL_STEP_RAW) * SELL_STEP_RAW
+    quantities = (half_raw, sellable_raw - half_raw)
+    if Decimal(shares(half_raw)) < Decimal(selected["minimum_shares"]):
+        raise ValueError("本轮买入份额不足以拆成两笔满足最小份额的限价卖单")
+    logical_ids = {buy.fill["logical_order_id"]}
+    total_quote = Decimal(0)
+    total_minimum_quote = Decimal(0)
+
+    for leg, quantity_raw in enumerate(quantities, start=1):
+        phase = f"第 {leg} 笔 NBA 限价卖出前"
+        ensure_market_trading(client, selected, phase, refresh=True)
+        before, available = wait_for_cash_position(client, uid, selected, baseline + remaining, phase=phase)
+        if quantity_raw > available:
+            raise ValueError(f"{phase}可卖份额不足")
+        quantity = Decimal(shares(quantity_raw))
+        bids = read_depth_levels(client, selected["position_id"], "bids")
+        if not bids:
+            raise ValueError(f"{phase}盘口没有买盘")
+        limit = max(price for price, _ in bids)
+        if limit >= 1:
+            raise ValueError(f"{phase}买一价超出可用限价范围")
+        depth = sum(size for price, size in bids if price >= limit)
+        if depth < quantity:
+            raise ValueError(f"{phase}买一深度不足，需 {quantity} 份，实际 {depth} 份")
+        selection = {**selected, "limit_price": str(limit), "depth_shares": str(depth)}
+        minimum_quote = quantity * limit
+        payload = dict(side="SELL", quantity=str(quantity_raw), price=format(limit, "f"), post_only=False,
+                       expiration=str(int(time()) + LIMIT_EXPIRATION_SECONDS))
+        # Best bid can change between quote and prepare. Check the executable depth again before submitting.
+        def check_sell_plan(plan):
+            if raw_amount(plan["legs"][0]["quantity"]) != quantity_raw:
+                raise ValueError(f"{phase}准备单份额与本轮委托不一致")
+            live_bids = read_depth_levels(client, selected["position_id"], "bids")
+            if sum(size for price, size in live_bids if price >= limit) < quantity:
+                raise ValueError(f"{phase}提交前限价内买盘已不足")
+
+        record(stage="nba_limit_sell_quote", **selection,
+               sell_leg=leg, best_bid=str(limit), requested_shares=shares(quantity_raw),
+               buy_logical_order_id=buy.fill["logical_order_id"])
+        fill = execute_polymarket_order(client, run, uid, signer, maker, record, selection, selected["neg_risk"],
+                                        payload, before_submit=check_sell_plan)
+        sold = fill_quantity_raw(fill)
+        quote = Decimal(fill["filled_quote"])
+        record(stage="nba_limit_half_sell_confirmed" if leg == 1 else "nba_limit_remaining_sell_confirmed",
+               **selection, **fill,
+               side="SELL", source=SOURCE, order_type="LIMIT", funding_source="cash", sell_leg=leg,
+               buy_logical_order_id=buy.fill["logical_order_id"], requested_shares=shares(quantity_raw),
+               minimum_filled_quote=str(minimum_quote), filled_avg_price=str(quote / Decimal(shares(sold))),
+               position_before_sell=shares(before), remaining_bought_shares=shares(remaining - sold))
+        if fill["logical_order_id"] in logical_ids or sold != quantity_raw:
+            raise ValueError(f"第 {leg} 笔 NBA 限价卖单的成交份额或订单 ID 与委托不一致")
+        if not minimum_quote - Decimal("0.000001") <= quote <= quantity:
+            raise ValueError(f"第 {leg} 笔 NBA 限价卖单的成交金额 {quote} 与限价及份额不符")
+        logical_ids.add(fill["logical_order_id"])
+        remaining -= sold
+        total_quote += quote
+        total_minimum_quote += minimum_quote
+
+    after, _ = wait_for_cash_position(client, uid, selected, baseline + remaining, baseline_raw=baseline)
+    record(stage="nba_limit_sells_reconciled", **selected, buy_logical_order_id=buy.fill["logical_order_id"],
+           bought_shares=shares(bought_raw), sold_shares=shares(bought_raw - remaining),
+           filled_quote=str(total_quote), minimum_filled_quote=str(total_minimum_quote),
+           position_before_buy=shares(baseline), position_after_sell=shares(after), remaining_bought_shares=shares(remaining))
 
 
 def read_withdrawable_cash(client, uid):

@@ -135,8 +135,9 @@ def get_app_password(email, *, password_env=None):
     return app_password
 
 
-def get_gmail_code(email, subject, send_code, *, password_env=None):
-    with open_gmail(email, get_app_password(email, password_env=password_env)) as inbox:
+def get_gmail_code(email, subject, send_code, *, password_env=None, mailbox=None):
+    mailbox = mailbox or email
+    with open_gmail(mailbox, get_app_password(mailbox, password_env=password_env)) as inbox:
         first_uid = next_mail_uid(inbox)
         send_code()
         return wait_for_code(inbox, first_uid, email, subject)

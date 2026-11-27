@@ -21,15 +21,15 @@ def test_limit_buy_no(run_trade):
     run_trade()
 
 
-@allure.title("限价挂单 · 冻结与零成交撤单")
-@pytest.mark.m03_case(LIMIT_CANCEL)
-def test_post_only_limit_buy_cancel_no(run_trade):
-    run_trade()
-
-
 @allure.title("自营限价买入 · 部分成交、撤余单与资金释放")
 @pytest.mark.m03_case(LIMIT_PARTIAL_CANCEL)
 def test_limit_partial_cancel_no(run_trade):
+    run_trade()
+
+
+@allure.title("自营限价买入 · 零成交挂单、撤单与可用余额恢复")
+@pytest.mark.m03_case(LIMIT_CANCEL)
+def test_own_limit_cancel_restores_available_cash(run_trade):
     run_trade()
 
 
@@ -41,8 +41,16 @@ def test_polymarket_nba_limit_buy(run_trade):
 
 @allure.title("Polymarket NBA 限价买入 · 同计划重放与订单资金对账")
 @pytest.mark.m03_case(POLYMARKET_NBA_LIMIT_BUY)
+@pytest.mark.trade_followup
 def test_polymarket_nba_limit_buy_replay(run_trade):
     run_trade(replay_nba=True)
+
+
+@allure.title("Polymarket NBA 多元 · 两次限价卖出及成交金额核对")
+@pytest.mark.m03_case(POLYMARKET_NBA_LIMIT_BUY)
+@pytest.mark.trade_followup
+def test_polymarket_nba_limit_sell(run_trade):
+    run_trade(sell_nba=True)
 
 
 @allure.title("Polymarket NBA 多元 · 被动挂单、撤单与资金释放")

@@ -18,6 +18,10 @@ from function.settings import BASE_URLS, WEB_ORIGINS, check_account_environment,
 
 
 def request_email_code(privy_client, account):
+    return read_login_code(account, partial(send_email_code, privy_client, account["email"]))
+
+
+def read_login_code(account, send_code):
     """按测试数据指定的邮箱服务发送并获取本轮验证码。"""
     check_account_environment(account)
     email = account["email"]
@@ -27,9 +31,9 @@ def request_email_code(privy_client, account):
     if not subject or not subject.strip():
         pytest.fail("请在 ci.yaml 填好当前账号的验证码邮件标题", pytrace=False)
     provider = account.get("mail_provider", "gmail")
-    send_code = partial(send_email_code, privy_client, email)
     if provider == "gmail":
-        return get_gmail_code(email, subject, send_code, password_env=account.get("gmail_password_env"))
+        return get_gmail_code(email, subject, send_code, password_env=account.get("gmail_password_env"),
+                              mailbox=account.get("gmail_mailbox"))
     if provider == "mailosaur":
         return get_mailosaur_code(email, subject, send_code)
     pytest.fail("mail_provider 只支持 gmail 或 mailosaur", pytrace=False)
@@ -85,6 +89,8 @@ def get_session_user_id(api_client):
 
 
 def verify_login_session(login, account):
+    if "expected_uid" in account and str(login["user_id"]) != str(account["expected_uid"]):
+        pytest.fail("邮箱登录返回的 UID 与专用测试账号不一致", pytrace=False)
     with create_client(bearer_token=login["token"]) as client:
         response = get_session(client)
     expect_native(

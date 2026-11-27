@@ -3,7 +3,7 @@ from urllib.parse import quote
 
 import allure
 
-from function.api_client import request
+from function.api_client import ApiTransportError, logger, request
 from function.reporting import attach_market_sample
 from function.response_checks import expect_json, expect_native
 
@@ -37,11 +37,21 @@ MARKET_EVENT_PAGE_SCHEMA = {
 
 
 def list_market_events(client, *, params=None):
-    """查询市场事件列表，支持排序和游标翻页。"""
-    return request(
-        client, "GET", "/api/v1/events/filter",
-        operation="market_event_list", params=params,
-    )
+    """查询市场事件列表。每次请求限时 10 秒，首次请求失败时重试一次。"""
+    for attempt in (1, 2):
+        try:
+            response = request(
+                client, "GET", "/api/v1/events/filter",
+                operation="market_event_list", params=params, timeout=10.0,
+            )
+        except ApiTransportError:
+            if attempt == 2:
+                raise
+            logger.warning("GET market_event_list 首次请求失败，重试一次")
+        else:
+            if response.status_code == 200 or attempt == 2:
+                return response
+            logger.warning("GET market_event_list 首次返回 HTTP %s，重试一次", response.status_code)
 
 
 def iter_market_events(client, list_params):

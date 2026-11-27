@@ -30,7 +30,10 @@ def main():
     message = EmailMessage()
     message["From"] = sender
     message["To"] = recipient
-    message["Subject"] = f"[Buzzing Preview] 接口自动化 {outcome}"
+    subject = f"[Buzzing Preview] 接口自动化 {outcome}"
+    if report_round := os.getenv("REPORT_ROUND"):
+        subject += f"（{report_round}）"
+    message["Subject"] = subject
     summary = junit_summary(Path("reports"))
     message.set_content(f"测试结果 {outcome}\n{summary}\n\n{report_line}\n\n运行记录\n{run_url}\n")
 

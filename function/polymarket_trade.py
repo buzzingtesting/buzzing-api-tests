@@ -21,7 +21,7 @@ SOURCE = "polymarket"
 CONFIRMATION_SECONDS = 60
 POSITION_SYNC_SECONDS = 10
 BTC_OUTCOMES = ("UP", "DOWN")
-SELL_STEP_RAW = 10_000  # Polymarket accepts two decimal places for market sell shares.
+SELL_STEP_RAW = 10_000  # Polymarket accepts two decimal places for sell shares.
 ASSET_TITLES = {"BTC": r"\b(?:BTC|BITCOIN)\b", "ETH": r"\b(?:ETH|ETHEREUM)\b"}
 CLOSED_STATES = {"closed", "settling", "settled", "resolved", "proposed", "disputed", "final", "finalized"}
 CLOSED_CODES = {"MARKET_CLOSED", "MARKET_SETTLED", "MARKET_RESOLVED", "RESULT_JUST_PROPOSED"}
@@ -41,11 +41,12 @@ class MarketClosed(ValueError):
 
 
 @dataclass(frozen=True)
-class BtcBuyFill:
+class MarketBuyFill:
     selection: dict
     neg_risk: bool
     uid: str
     logical_order_id: str
+    order_id: str
     quantity_raw: int
     position_before_buy_raw: int
 
@@ -204,7 +205,7 @@ def execute_btc_buy(client, run, uid, signer, maker, record, list_params, *, ass
     bought = fill_quantity_raw(fill)
     record(stage="btc_fill_confirmed", **selected, **fill, source=SOURCE, side="BUY", order_type="MARKET",
            funding_source=run.funding, budget=shares(run.budget_raw), position_before_buy_raw=before_buy)
-    return BtcBuyFill(selected, neg_risk, uid, fill["logical_order_id"], bought, before_buy)
+    return MarketBuyFill(selected, neg_risk, uid, fill["logical_order_id"], fill["order_id"], bought, before_buy)
 
 
 def execute_polymarket_order(client, run, uid, signer, maker, record, selected, neg_risk, payload, *, before_submit=None):

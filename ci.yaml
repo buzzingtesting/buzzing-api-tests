@@ -16,6 +16,7 @@ ci_tester:
   gmail_password_env: BUZZING_GMAIL_APP_PASSWORD_CI
   expected_session_status: 200
   expected_auth_levels: [1, 2]
+  expected_uid: 991017
 
 testdata2:
   environment: preview
@@ -51,6 +52,9 @@ market_cases:
     list_params:
       page_size: 30
       sort_by: 24hr_volume
+
+  own_volume_limit:
+    partial_max_budget_raw: "5000000"
 
   esports_props:
     params:

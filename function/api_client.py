@@ -15,6 +15,11 @@ PREVIEW_SUBMIT_ALERT_REASONS = {
     "Could not add funds. Please try again.": "Polymarket pUSD 补资未就绪",
 }
 preview_submit_alert_handler = ContextVar("preview_submit_alert_handler", default=None)
+order_write_started = ContextVar("order_write_started", default=False)
+
+
+class ApiTransportError(RuntimeError):
+    """请求未收到 HTTP 响应。"""
 
 
 def create_client(bearer_token=None):
@@ -41,13 +46,15 @@ def create_client(bearer_token=None):
 
 def request(client, method, path, *, operation, **kwargs):
     """日志使用固定操作名，避免记录 URL 中的参数和用户标识。"""
+    if method == "POST" and path in (ORDER_SUBMIT_PATH, "/api/v1/orderbook/order/cancel"):
+        order_write_started.set(True)
     started = time.monotonic()
     try:
         response = client.request(method, path, **kwargs)
     except httpx.RequestError as error:
         failure = type(error).__name__
         logger.error("%s %s %s", method, operation, failure)
-        raise RuntimeError(f"{method} {operation} 请求失败（{failure}）") from None
+        raise ApiTransportError(f"{method} {operation} 请求失败（{failure}）") from None
 
     logger.info(
         "%s %s HTTP %s %.0fms",

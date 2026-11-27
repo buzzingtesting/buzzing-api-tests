@@ -2,7 +2,7 @@ import allure
 import pytest
 
 from function.reporting import PROJECT_NAME, ordered_suite_name
-from function.trade_run import MARKET_BUY, MARKET_SELL, POLYMARKET_BTC_BUY
+from function.trade_run import POLYMARKET_BTC_BUY, POLYMARKET_SPORTS_DRAW_BUY
 
 
 pytestmark = [
@@ -13,16 +13,17 @@ pytestmark = [
 ]
 
 
-@allure.title("市价买入 · 成交、持仓增加与订单历史")
-@pytest.mark.m03_case(MARKET_BUY)
-def test_market_buy_no(run_trade):
+@allure.title("体育 Moneyline Draw · 1.3 U 市价买入、持仓与订单历史")
+@pytest.mark.m03_case(POLYMARKET_SPORTS_DRAW_BUY)
+def test_polymarket_sports_draw_market_buy(run_trade):
     run_trade()
 
 
-@allure.title("市价卖出 · 可卖持仓、成交、资金与订单历史")
-@pytest.mark.m03_case(MARKET_SELL)
-def test_market_sell_no(run_trade):
-    run_trade()
+@allure.title("体育 Moneyline Draw · 市价卖出、可卖持仓、资金与订单历史")
+@pytest.mark.m03_case(POLYMARKET_SPORTS_DRAW_BUY)
+@pytest.mark.trade_followup
+def test_polymarket_sports_draw_market_sell(run_trade):
+    run_trade(sell_sports=True)
 
 
 @allure.title("Polymarket BTC 二元循环 · 1.5 市价买入与成交确认")
@@ -33,5 +34,6 @@ def test_polymarket_btc_market_buy(run_trade):
 
 @allure.title("Polymarket BTC 二元循环 · 市价卖出 50% 并卖出剩余份额")
 @pytest.mark.m03_case(POLYMARKET_BTC_BUY)
+@pytest.mark.trade_followup
 def test_polymarket_btc_market_sell(run_trade):
     run_trade(sell_btc=True)

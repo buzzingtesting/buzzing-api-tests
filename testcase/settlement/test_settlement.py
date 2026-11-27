@@ -111,8 +111,8 @@ def test_dispute_entry(api_client, authenticated_api_client, dispute_market_id):
 
 @allure.title("自营市场争议 · 已登录但无持仓时不可发起争议")
 @pytest.mark.manual_dispute("no_position")
-def test_dispute_rejects_user_without_position(authenticated_api_client, dispute_market_id):
-    market_id = dispute_market_id
+def test_dispute_rejects_user_without_position(authenticated_api_client, dispute_no_position_market_id):
+    market_id = dispute_no_position_market_id
     allure.dynamic.parameter("市场 ID", market_id)
     get_session_user_id(authenticated_api_client)
 

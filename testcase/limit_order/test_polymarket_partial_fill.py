@@ -23,11 +23,12 @@ from function.trade_state import BOOK
 @allure.feature("限价单")
 @allure.title("Polymarket 限价买入 · 部分成交后撤销余单")
 @pytest.mark.b3_fixture
+@pytest.mark.skip(reason="暂时无法执行，待准备可控的 Polymarket 对手卖单")
 def test_polymarket_partial_fill_and_cancel():
     fixture = TradeFixture("polymarket_partial")
     expected_fill = Decimal(shares(raw_amount(fixture.spec["opposing_shares_raw"])))
     assert expected_fill > 0, "专用盘口应有可控的对手卖单"
-    with fixture.connect() as (client, signer, maker):
+    with fixture.connect() as (client, uid, signer, maker):
         selected = fixture.select_market(client)
         allure.dynamic.parameter("市场", selected["market_id"])
 
@@ -37,9 +38,9 @@ def test_polymarket_partial_fill_and_cancel():
                           allure.attachment_type.JSON)
 
         market_filters = require_empty_market_orders(client, fixture.source, selected)
-        cash_before, pusd = read_withdrawable_cash(client, fixture.uid)
+        cash_before, pusd = read_withdrawable_cash(client, uid)
         assert min(cash_before, pusd) >= Decimal(shares(fixture.budget_raw)), "需预置足额 pUSD 和可提现余额"
-        position_before, _ = read_cash_position(client, fixture.uid, selected)
+        position_before, _ = read_cash_position(client, uid, selected)
 
         payload = dict(side="BUY", total_budget=str(fixture.budget_raw), price=str(fixture.price), post_only=False,
                        expiration=str(int(time()) + LIMIT_EXPIRATION_SECONDS))
@@ -66,12 +67,12 @@ def test_polymarket_partial_fill_and_cancel():
         ids = {"logical_order_id": logical, "order_id": order_id}
         partial = cancelled = None
         try:
-            partial = wait_limit_order(client, fixture.uid, selected, record, logical, order_id, started, partial=True)
+            partial = wait_limit_order(client, uid, selected, record, logical, order_id, started, partial=True)
             filled = Decimal(partial["filled_quantity"])
             remaining = Decimal(partial["remaining_quantity"])
             assert partial["status"] in {"partial", "open"} and filled == expected_fill and filled + remaining == planned
             assert remaining > 0 and Decimal(partial["filled_quote"]) > 0
-            cash_held, _ = read_withdrawable_cash(client, fixture.uid)
+            cash_held, _ = read_withdrawable_cash(client, uid)
             locked = remaining * fixture.price
             record(stage="部分成交及剩余挂单", **ids, status=partial["status"], filled_quantity=str(filled),
                    remaining_quantity=str(remaining), remaining_reserve=str(locked), cash_held=str(cash_held))
@@ -80,7 +81,7 @@ def test_polymarket_partial_fill_and_cancel():
                 record(stage="发送撤单并回查终态", **ids)
                 expect_json(request(client, "POST", BOOK + "order/cancel", operation="cancel_partial_polymarket_order",
                                     json={"order_id": order_id, "source": fixture.source}), 200)
-                cancelled = wait_limit_order(client, fixture.uid, selected, record, logical, order_id, monotonic(), cancelling=True)
+                cancelled = wait_limit_order(client, uid, selected, record, logical, order_id, monotonic(), cancelling=True)
                 record(stage="撤单终态", **ids, status=cancelled["status"], filled_quantity=cancelled.get("filled_quantity"),
                        remaining_quantity=cancelled.get("remaining_quantity"))
         assert cancelled is not None, "订单在观察到部分成交前已结束"
@@ -90,8 +91,8 @@ def test_polymarket_partial_fill_and_cancel():
         assert len(rows) == 1 and rows[0]["order_id"] == order_id and rows[0]["ended_reason"] == "cancelled"
         assert rows[0]["had_fill"] is True and Decimal(rows[0]["filled_quantity"]) == filled
         expected_position_raw = position_before + int(filled * 1_000_000)
-        position_after, _ = wait_for_cash_position(client, fixture.uid, selected, expected_position_raw)
-        cash_after = wait_cash_snapshot(client, fixture.uid, cash_held + locked)
+        position_after, _ = wait_for_cash_position(client, uid, selected, expected_position_raw)
+        cash_after = wait_cash_snapshot(client, uid, cash_held + locked)
         assert cash_after < cash_before, "撤单保留已成交部分的扣款"
         record(stage="部分成交撤单后的资金、持仓与历史", **ids, position_before=str(position_before),
                position_after=str(position_after), cash_after=str(cash_after), released_cash=str(locked),
