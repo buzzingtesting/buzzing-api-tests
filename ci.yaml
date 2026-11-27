@@ -32,6 +32,27 @@ prod_testdata:
   expected_session_status: 200
   expected_auth_levels: [1, 2]
 
+rewards_cases:
+  m06_friend_simulation:
+    account: tester1
+    uid: 991039
+    task_id: 8d1c5468b058886d6aa902db2d5f5e99
+    task_version: 2
+    scenario: friends
+    amount_cents: 500
+    simulate_unlock: true
+    friend_conditions:
+      app_login: 677e1096-4657-4394-85f4-54f45cd333c7
+      deposit: cc371476-985f-4341-871f-cfc9a6e41617
+  m06_date_daily_grant:
+    account: tester1
+    uid: 991039
+    task_id: b41c1081acc145cf586c3d777943f263
+    task_version: 2
+    scenario: daily
+    amount_cents: 200
+    simulate_unlock: true
+
 market_cases:
   home_list:
     page_size: 30

@@ -35,7 +35,7 @@ def request_email_code(privy_client, account):
     pytest.fail("mail_provider 只支持 gmail 或 mailosaur", pytrace=False)
 
 
-def login_with_privy_identity_token(api_client, identity_token):
+def login_with_privy_identity_token(api_client, identity_token, *, expected_uid=None, platform=None, audit=None):
     """把同一个环境的 Privy 身份凭证换成 Buzzing token。"""
     environment = get_environment()
     if str(api_client.base_url).rstrip("/") != BASE_URLS[environment]:
@@ -43,15 +43,26 @@ def login_with_privy_identity_token(api_client, identity_token):
     if not isinstance(identity_token, str) or not identity_token.strip():
         raise ValueError("缺少 Privy identity token")
 
+    payload = {"privy_identity_token": identity_token}
+    if expected_uid is not None:
+        payload["expect_user_id"] = str(expected_uid)
+    if platform is not None:
+        if environment != "preview" or platform != "ios" or expected_uid is None:
+            raise ValueError("App 登录只允许指定 UID 的 Preview 场景")
+        payload["platform"] = platform
+
     response = request(
         api_client,
         "POST",
         LOGIN_PATH,
         operation="privy_identity_login",
         headers={"Origin": WEB_ORIGINS[environment]},
-        json={"privy_identity_token": identity_token},
+        json=payload,
         follow_redirects=False,
     )
+    if audit is not None:
+        audit.append({"method": "POST", "path": LOGIN_PATH, "http_status": response.status_code,
+                      "request_id": response.headers.get("x-request-id"), "cf_ray": response.headers.get("cf-ray")})
     return expect_native(
         response,
         status=200,
@@ -61,7 +72,7 @@ def login_with_privy_identity_token(api_client, identity_token):
             "properties": {
                 "token": {"type": "string", "minLength": 1},
                 "expire": {"type": "string", "minLength": 1},
-                "user_id": {"type": "integer"},
+                "user_id": {"type": "integer"} if expected_uid is None else {"const": expected_uid},
             },
         },
     )
@@ -101,6 +112,14 @@ def verify_login_session(login, account):
     )
 
 
+def get_privy_email_identity_token(account):
+    with create_privy_client() as privy:
+        code = request_email_code(privy, account)
+        privy_session = verify_email_code(privy, account["email"], code)
+        verify_privy_user(privy, privy_session)
+    return privy_session["identity_token"]
+
+
 def get_test_jwt(case_name, account):
     """复用有效凭证，缺失或快到期时自动通过邮箱登录签发新凭证。"""
     check_account_environment(account)
@@ -110,11 +129,7 @@ def get_test_jwt(case_name, account):
     except CachedLoginUnavailable as error:
         logging.getLogger("buzzing.api").info("%s，自动重新登录", error)
 
-    with create_privy_client() as privy:
-        code = request_email_code(privy, account)
-        privy_session = verify_email_code(privy, email, code)
-        verify_privy_user(privy, privy_session)
-    identity_token = privy_session["identity_token"]
+    identity_token = get_privy_email_identity_token(account)
     with create_client() as client:
         login = login_with_privy_identity_token(client, identity_token)
     verify_login_session(login, account)

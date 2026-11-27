@@ -17,9 +17,41 @@ on:
         description: Only verify API access
         type: boolean
         default: true
+      suite:
+        description: Scenario suite to run after login
+        type: choice
+        options:
+          - regression
+          - m06_rewards
+        default: regression
+      m06_operation:
+        description: M06 operation (grant issues test Credit in Preview)
+        type: choice
+        options:
+          - inspect
+          - prepare
+          - grant
+          - reset
+        default: inspect
+      m06_case:
+        description: M06 date-tool task for prepare or grant
+        type: choice
+        options:
+          - friends
+          - daily
+        default: friends
+      m06_scene_version:
+        description: Expected active Preview M06 scene version (optional)
+        type: string
+        required: false
+      m06_resume_run:
+        description: Previous GitHub Actions run ID containing the M06 journal (optional)
+        type: string
+        required: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   scenarios:
@@ -31,6 +63,34 @@ jobs:
     env:
       BUZZING_ENV: ${{ inputs.environment || 'preview' }}
     steps:
+      - name: Verify M06 selection
+        if: ${{ inputs.suite == 'm06_rewards' || inputs.m06_resume_run }}
+        shell: bash
+        env:
+          M06_SUITE: ${{ inputs.suite }}
+          M06_ACCESS_ONLY: ${{ inputs.access_only }}
+          M06_OPERATION: ${{ inputs.m06_operation }}
+          M06_SCENE_VERSION: ${{ inputs.m06_scene_version }}
+          M06_RESUME_RUN: ${{ inputs.m06_resume_run }}
+        run: |
+          if [[ "$M06_SUITE" != m06_rewards || "$BUZZING_ENV" != preview || "$M06_ACCESS_ONLY" == true ]]; then
+            echo '::error::M06 Rewards requires Preview and login mode (clear Only verify API access).'
+            exit 1
+          fi
+          if [[ "$M06_OPERATION" != inspect && "$GITHUB_RUN_ATTEMPT" != 1 ]]; then
+            echo '::error::Start a new workflow dispatch with m06_resume_run pointing to the saved journal.'
+            exit 1
+          fi
+          if [[ "$M06_OPERATION" == reset && -z "$M06_RESUME_RUN" ]]; then
+            echo '::error::Reset requires the Actions run ID with the completed Rewards journal.'
+            exit 1
+          fi
+          if [[ -n "$M06_RESUME_RUN" ]]; then
+            if [[ ! "$M06_RESUME_RUN" =~ ^[1-9][0-9]*$ || "$M06_OPERATION" == inspect || -n "$M06_SCENE_VERSION" ]]; then
+              echo '::error::Resume requires a numeric Actions run ID, a write operation, and a blank scene version.'
+              exit 1
+            fi
+          fi
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -45,12 +105,12 @@ jobs:
           mkdir -p reports
           python -m function.preview_access 2>&1 | tee reports/api-access.log
       - uses: actions/setup-java@v5
-        if: ${{ !inputs.access_only }}
+        if: ${{ !inputs.access_only && inputs.suite != 'm06_rewards' }}
         with:
           distribution: temurin
           java-version: '17'
       - name: Install Allure CLI
-        if: ${{ !inputs.access_only }}
+        if: ${{ !inputs.access_only && inputs.suite != 'm06_rewards' }}
         shell: bash
         run: |
           allure_version=2.34.0
@@ -61,7 +121,7 @@ jobs:
           echo "$RUNNER_TEMP/allure-${allure_version}/bin" >> "$GITHUB_PATH"
       - name: Run scenario tests
         id: scenario_tests
-        if: ${{ !inputs.access_only }}
+        if: ${{ !inputs.access_only && inputs.suite != 'm06_rewards' }}
         shell: bash
         env:
           PYTEST_ADDOPTS: -p no:cacheprovider
@@ -80,6 +140,80 @@ jobs:
           cache_dir="$(mktemp -d "$RUNNER_TEMP/buzzing-auth-XXXXXX")"
           trap 'rm -rf -- "$cache_dir"' EXIT
           BUZZING_AUTH_CACHE_DIR="$cache_dir" python run.py --allow-test-failures
+      - name: Verify M06 journal source
+        if: ${{ inputs.suite == 'm06_rewards' && inputs.m06_resume_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          M06_RESUME_RUN: ${{ inputs.m06_resume_run }}
+        run: |
+          curl --fail --silent --show-error --max-time 20 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$M06_RESUME_RUN" |
+            python -c '
+          import json, os, sys
+          run = json.load(sys.stdin)
+          workflow_path = os.environ["GITHUB_WORKFLOW_REF"].split("@", 1)[0].split("/", 2)[2]
+          if (run["status"] != "completed" or run["event"] != "workflow_dispatch"
+                  or run["path"].split("@", 1)[0] != workflow_path
+                  or run["head_repository"]["full_name"] != os.environ["GITHUB_REPOSITORY"]
+                  or os.environ["GITHUB_REF_TYPE"] != "branch"
+                  or run["head_branch"] != os.environ["GITHUB_REF_NAME"]):
+              sys.exit("Resume requires a completed manual run of this workflow on the same branch and repository.")
+          '
+      - name: Restore M06 journal
+        if: ${{ inputs.suite == 'm06_rewards' && inputs.m06_resume_run }}
+        uses: actions/download-artifact@v8
+        with:
+          name: m06-date-test
+          path: reports/m06-date-test
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.m06_resume_run }}
+      - name: Check M06 Rewards with the tester1 session
+        id: m06_rewards
+        if: ${{ !inputs.access_only && inputs.suite == 'm06_rewards' && env.BUZZING_ENV == 'preview' }}
+        shell: bash
+        env:
+          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
+          BUZZING_REWARDS_ADMIN_TOKEN: ${{ inputs.m06_operation != 'inspect' && secrets.BUZZING_REWARDS_ADMIN_TOKEN || '' }}
+          M06_OPERATION: ${{ inputs.m06_operation || 'inspect' }}
+          M06_CASE: ${{ inputs.m06_case || 'friends' }}
+          M06_SCENE_VERSION: ${{ inputs.m06_scene_version }}
+          M06_RESUME_RUN: ${{ inputs.m06_resume_run }}
+        run: |
+          cache_dir="$(mktemp -d "$RUNNER_TEMP/buzzing-auth-XXXXXX")"
+          trap 'rm -rf -- "$cache_dir"' EXIT
+          export BUZZING_AUTH_CACHE_DIR="$cache_dir"
+          if [[ "$M06_OPERATION" == inspect ]]; then
+            args=(--inspect-user --report reports/m06-rewards.json)
+            if [[ -n "$M06_SCENE_VERSION" ]]; then
+              args+=(--expected-version "$M06_SCENE_VERSION")
+            fi
+            python -m function.rewards_simulation "${args[@]}" 2>&1 | tee reports/m06-rewards.log
+          else
+            args=(--journal reports/m06-date-test)
+            if [[ -n "$M06_RESUME_RUN" ]]; then
+              args+=(--resume)
+            else
+              args+=(--case "$M06_CASE" --run-id "$(python -c 'from uuid import uuid4; print(uuid4())')")
+              if [[ -n "$M06_SCENE_VERSION" ]]; then
+                args+=(--scene-version "$M06_SCENE_VERSION")
+              fi
+            fi
+            case "$M06_OPERATION" in
+              grant) args+=(--grant) ;;
+              reset) args+=(--reset-completed) ;;
+            esac
+            python -m function.rewards_test_payout "${args[@]}" 2>&1 | tee reports/m06-rewards.log
+          fi
+      - name: Upload M06 journal for continuation
+        if: ${{ always() && steps.m06_rewards.outcome != 'skipped' && hashFiles('reports/m06-date-test/*/case.json') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: m06-date-test
+          path: reports/m06-date-test/
+          if-no-files-found: error
       - name: Upload Allure HTML
         id: allure_report
         if: ${{ !cancelled() && steps.scenario_tests.outcome != 'skipped' && hashFiles('reports/allure-report/index.html') != '' }}
@@ -96,8 +230,9 @@ jobs:
           path: |
             reports/api-access.log
             reports/run-*/
+            reports/m06-rewards.*
       - name: Email the Preview report
-        if: ${{ !cancelled() && !inputs.access_only && env.BUZZING_ENV == 'preview' }}
+        if: ${{ !cancelled() && !inputs.access_only && inputs.suite != 'm06_rewards' && env.BUZZING_ENV == 'preview' }}
         env:
           BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD_CI }}
           BUZZING_REPORT_FROM: ${{ vars.BUZZING_REPORT_FROM }}
@@ -106,7 +241,7 @@ jobs:
           REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
         run: python -m function.email_report
       - name: Post the Preview report to Lark
-        if: ${{ !cancelled() && !inputs.access_only && env.BUZZING_ENV == 'preview' }}
+        if: ${{ !cancelled() && !inputs.access_only && inputs.suite != 'm06_rewards' && env.BUZZING_ENV == 'preview' }}
         env:
           LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
           LARK_SIGNING_SECRET: ${{ secrets.LARK_SIGNING_SECRET }}

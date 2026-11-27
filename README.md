@@ -9,6 +9,8 @@
 | [`ci.yaml`](ci.yaml) | 维护测试账号和市场场景参数。 |
 | [`check-framework.yml`](.github/workflows/check-framework.yml) | 配置 GitHub Actions 的定时计划、运行环境和报告通知。 |
 | `run.py` | 运行 `testcase/` 并生成报告。 |
+| [Preview 接口自动化一期依赖交接](docs/preview-api-automation-dependencies.md) | 查阅开发提供的依赖 4–7，涵盖市场与资金、API 契约、Rewards 发奖、争议与结算。 |
+| [M06 Rewards 接口自动化](docs/m06-rewards.md) | 运行 Preview 好友进度模拟、普通任务、真实跨日和 Credit 对账。 |
 
 ## 本地运行
 
@@ -99,6 +101,8 @@ Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。现有 
 **定时执行**在 [`check-framework.yml`](.github/workflows/check-framework.yml) 的 `on.schedule` 维护。当前为 `0 9 * * *`，时区为 `Asia/Shanghai`，每天北京时间 **09:00** 计划触发 Preview 场景。修改后提交到默认分支 `main`。
 
 **手动执行**在 [Actions → Buzzing API scenarios](https://github.com/buzzingtesting/buzzing-api-tests/actions/workflows/check-framework.yml) 点击 **Run workflow**，选择环境。保留 **Only verify API access** 会执行只读预检，取消勾选会继续执行场景并生成报告。
+
+登录模式的 `suite` 默认是 `regression`。选 `m06_rewards` 时，Preview 使用 `tester1` 的现有 Gmail Secret 登录。日期工具写入的阶段记录保存在 `m06-date-test` 产物中，通过 `m06_resume_run` 恢复原轮次。 [M06 运行说明](docs/m06-rewards.md)
 
 CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LABEL` 可指定 Runner 标签。Preview CI 默认从公司邮箱取验证码，使用 `ci.yaml` 中的 `ci_tester`。仓库变量 `BUZZING_PREVIEW_TESTDATA` 可切换 Preview CI 使用的账号。
 
