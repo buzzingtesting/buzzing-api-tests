@@ -2,7 +2,7 @@ name: Buzzing API scenarios
 
 on:
   schedule:
-    - cron: '0 9 * * *'
+    - cron: '0 18 * * *'
       timezone: Asia/Shanghai
   workflow_dispatch:
     inputs:
