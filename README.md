@@ -99,7 +99,7 @@ Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。本地 
 
 ## GitHub Actions 运行计划
 
-**定时执行**在 [`check-framework.yml`](.github/workflows/check-framework.yml) 的 `on.schedule` 维护。当前为 `0 9 * * *`，时区为 `Asia/Shanghai`，每天北京时间 **09:00** 计划触发 Preview 场景。修改后提交到默认分支 `main`。
+**定时执行**在 [`check-framework.yml`](.github/workflows/check-framework.yml) 的 `on.schedule` 维护。当前为 `0 18 * * *`，时区为 `Asia/Shanghai`，每天北京时间 **18:00** 计划触发 Preview 场景。修改后提交到默认分支 `main`。
 
 **手动执行**在 [Actions → Buzzing API scenarios](https://github.com/buzzingtesting/buzzing-api-tests/actions/workflows/check-framework.yml) 点击 **Run workflow**。默认 Preview，留空 `dispute_market_id` 和 `disputed_market_id` 时执行与定时任务相同的套件。`access_only` 开关只用于 Production。
 
