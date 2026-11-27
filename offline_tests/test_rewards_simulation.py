@@ -201,3 +201,47 @@ def test_user_only_check_rejects_a_different_scene_version(tmp_path):
         simulator = FriendSimulation(None, RewardsAPI(user, preview.uid, []), preview.case)
         with pytest.raises(ValueError, match="同一模拟场景版本"):
             simulator.inspect_user(expected_version=4)
+
+
+@pytest.mark.parametrize(("visible", "scene_version"), [(False, None), (True, None), (True, 2)])
+def test_scheduled_snapshot_reads_ledger_without_a_completed_scene(monkeypatch, tmp_path, visible, scene_version):
+    preview = PreviewDateTest()
+    task = {"id": preview.task, "version": "2"}
+    calls = []
+    projection = {} if scene_version is None else {"test_context": {"version": str(scene_version)}}
+
+    def read(request):
+        assert request.method == "GET"
+        path = request.url.path
+        calls.append(path)
+        if path == f"{REWARDS}/overview":
+            return httpx.Response(200, json={"tasks": [{"task": task}] if visible else [], "receipt_revision": "17"})
+        if path == f"{REWARDS}/tasks/{preview.task}":
+            assert visible
+            return httpx.Response(200, json={"task": task, "qualified": False, **projection})
+        if path == f"{REWARDS}/tasks/{preview.task}/friends":
+            assert visible
+            friends = [{"id": "test:partial"}] if scene_version is not None else []
+            return httpx.Response(200, json={"friends": friends, "done_count": "0", **projection})
+        return preview.user(request)
+
+    def client(*, bearer_token):
+        assert bearer_token == "mock-qa-session"
+        return httpx.Client(base_url="https://preview-api.buzzing.app", transport=httpx.MockTransport(read))
+
+    monkeypatch.setenv("BUZZING_ENV", "preview")
+    monkeypatch.setenv("BUZZING_REWARDS_TOKEN", "mock-qa-session")
+    monkeypatch.delenv("BUZZING_REWARDS_ADMIN_TOKEN", raising=False)
+    monkeypatch.setattr(rewards_simulation, "create_client", client)
+    report = tmp_path / "snapshot.json"
+    snapshot = rewards_simulation.run_simulation("snapshot", root=tmp_path, report=report)
+
+    assert snapshot["task_visible"] is visible
+    assert snapshot["credit_and_notifications_snapshot"]["receipt_revision"] == 17
+    assert calls.count(f"{REWARDS}/overview") == 1
+    assert {f"{REWARDS}/receipts", HISTORY, "/api/v1/notifications/list"} <= set(calls)
+    assert (f"{REWARDS}/tasks/{preview.task}/friends" in calls) is visible
+    if visible:
+        assert snapshot["scene_active"] is (scene_version is not None)
+        assert snapshot["version"] == scene_version and snapshot["done_count"] == 0
+    assert json.loads(report.read_text()) == snapshot

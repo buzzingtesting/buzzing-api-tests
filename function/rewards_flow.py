@@ -239,6 +239,7 @@ def flow_case(path):
 
 def run_flow(case, root, wait_seconds, replay_path=None):
     require(get_environment() == "preview", "M06 受控写入仅支持 Preview")
+    require(0 <= wait_seconds <= 600, "轮询预算须为 0 至 600 秒")
     journal = RunJournal(root, case)
     with ExitStack() as stack:
         uid, friend_uid = case["uid"], case.get("friend_uid")
@@ -301,7 +302,6 @@ def main():
     args = parser.parse_args()
     try:
         require(get_environment() == "preview", "M06 受控写入仅支持 Preview")
-        require(0 <= args.wait_seconds <= 600, "轮询预算须为 0 至 600 秒")
         case = flow_case(args.case)
         outcome = run_flow(case, args.journal, args.wait_seconds, args.replay_event)
     except (ValueError, RuntimeError, OSError, KeyError, TypeError, pytest.fail.Exception) as error:

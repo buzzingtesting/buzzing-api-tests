@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from uuid import UUID
 
 import allure
 import pytest
@@ -45,6 +46,18 @@ def pytest_addoption(parser):
     parser.addoption("--disputed-market-id", type=int, help="手动回归使用的 Preview 争议中市场 ID")
     parser.addoption("--trade-run", action="append", type=Path, default=[],
                      help="本次已批准的 Preview 交易参数 JSON，可重复传入")
+    rewards = parser.getgroup("M06 Rewards")
+    rewards.addoption("--m06-operation", choices=("snapshot", "inspect", "inspect-admin", "simulate", "prepare",
+                                                  "grant", "reset", "flow", "replay"), help="单独运行指定的 Preview M06 操作")
+    rewards.addoption("--m06-case", choices=("daily", "friends"), help="日期工具的预设任务")
+    rewards.addoption("--m06-case-file", type=Path, help="真实业务场景的用例 JSON")
+    rewards.addoption("--m06-run-id", type=UUID, help="模拟场景或日期工具的运行 ID")
+    rewards.addoption("--m06-resume", action="store_true", help="从指定的日期工具证据目录恢复原运行")
+    rewards.addoption("--m06-scene-version", type=int, help="指定要核对或接管的模拟场景版本")
+    rewards.addoption("--m06-journal", type=Path, help="M06 运行证据目录")
+    rewards.addoption("--m06-report", type=Path, help="用户端只读检查的 JSON 报告路径")
+    rewards.addoption("--m06-wait-seconds", type=int, default=90, help="等待发奖对账的秒数")
+    rewards.addoption("--m06-replay-event", type=Path, help="服务端原事件重投的证据 JSON")
 
 
 def configured_trade_runs(config):
@@ -75,6 +88,9 @@ def pytest_generate_tests(metafunc):
 
 def pytest_collection_modifyitems(config, items):
     environment = get_environment()
+    m06_operation = config.getoption("--m06-operation")
+    if m06_operation is not None and environment != "preview":
+        raise pytest.UsageError("--m06-operation 仅支持 Preview")
     dispute_market_id = config.getoption("--dispute-market-id")
     no_position_market_id = config.getoption("--dispute-no-position-market-id")
     disputed_market_id = config.getoption("--disputed-market-id")
@@ -90,6 +106,13 @@ def pytest_collection_modifyitems(config, items):
     require_full = full_preview_required()
     scenario_order = {run.run_id: index for index, run in enumerate(configured_trade_runs(config))}
     for item in items:
+        rewards = item.get_closest_marker("m06_operation")
+        if m06_operation is not None or rewards is not None:
+            if rewards is not None and rewards.args == (m06_operation,):
+                ordinary.append(item)
+            else:
+                deselected.append(item)
+            continue
         dispute = item.get_closest_marker("manual_dispute")
         if dispute is not None:
             if dispute.args == ("already_open",):

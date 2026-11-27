@@ -1,6 +1,6 @@
 # M06 Rewards 接口自动化
 
-按开发交接第 6 版，Preview 日期工具支持模拟进度，也支持在达标后显式发放可入账的 `[TEST]` Credit。`python -m function.rewards_simulation` 用于验证进度投影，`python -m function.rewards_test_payout` 用于测试发奖和对账。真实业务事件的入口为 `python -m function.rewards_flow`。
+按开发交接第 6 版，Preview 日期工具支持模拟进度，也支持在达标后显式发放可入账的 `[TEST]` Credit。接口用例位于 [`testcase/rewards/`](../testcase/rewards/)，使用 `python -m pytest testcase/rewards --m06-operation <操作>` 单独运行。原有 `python -m function.rewards_*` 命令仍可使用。
 
 [计划第三节](https://trufflelabs.jp.larksuite.com/wiki/STaYwLQuzieQMSkPLqNj52SMpJg#doxjpVVn8dDQ7PQtPmi7pHYProe) · [计划第八节](https://trufflelabs.jp.larksuite.com/wiki/STaYwLQuzieQMSkPLqNj52SMpJg#doxjperWnel3wJlWyd5GvwVWhvg) · [t105673 开发交接](https://trufflelabs.jp.larksuite.com/wiki/Pt4EwV2odid8WakLKXlj6524pae#ZULIdvsPAotIlexzX45j1TrkpEd)
 
@@ -12,9 +12,17 @@
 
 历史场景版本 3 属于此前选用的任务。当前用例的场景和版本按 `QA1116-06-Friends-Once` 的 UID 与任务 ID 读取。 [Rewards 日期推进后台](https://test-admin.buzzing.app/next/tools/test/rewards-date)
 
-### GitHub Actions 登录模式
+### GitHub Actions 定时执行
 
-在现有 **Buzzing API scenarios** 工作流手动选择 `preview` 和 `suite=m06_rewards`，取消勾选 `access_only`，三个争议市场 ID 留空。M06 使用仓库的 `BUZZING_GMAIL_APP_PASSWORD` 和 `tester1` 登录，复用本轮用户会话。 [GitHub Actions 工作流](https://github.com/buzzingtesting/buzzing-api-tests/actions/workflows/check-framework.yml)
+每天北京时间 18:00 的 Preview 工作流在常规回归和可能的补跑结束后执行 M06。使用 `tester1`（UID `991039`）和 `QA1116-03-Daily-Split` v2 准备一个可发奖单元，通过日期工具实际发放一笔 200 cents 的 `[TEST]` Credit。按同一个 `batch_id` 核对后台发奖记录、用户任务投影、可用 Credit 和唯一 Inbox 通知。确认对账和幂等后，退出本轮模拟场景并回查 Credit 仍在。已到账的测试 Credit 会保留在 Preview 账号。
+
+定时执行依赖仓库的 `BUZZING_GMAIL_APP_PASSWORD` 和有日期工具权限的 `BUZZING_REWARDS_ADMIN_TOKEN`。发奖前和对账后会保存运行记录。重跑同一轮 Actions 会从 `m06-date-test-scheduled-*` 恢复原运行和幂等键。没有可恢复记录时，重跑会失败。新一轮若发现同一账号和任务还有活动场景，会停止准备并保留场景，以便核对原轮次。普通任务、真实好友绑定和真实跨日从各自的业务事件入口运行。
+
+同一轮 Actions 也执行离线回归和用户端只读快照。配置的好友任务对账号不可见时，保存账务快照并将好友检查标为跳过。日志、JUnit 和快照在 `preview-m06-rewards` 产物，发奖账务证据与续跑记录在 `m06-date-test-scheduled-*` 产物。
+
+### GitHub Actions 手动执行
+
+在现有 **Buzzing API scenarios** 工作流手动选择 `preview` 和 `suite=m06_rewards`，取消勾选 `access_only`，三个争议市场 ID 留空。工作流按 `m06_operation` 选择 `testcase/rewards/` 中的用例，使用仓库的 `BUZZING_GMAIL_APP_PASSWORD` 和 `tester1` 登录。 [GitHub Actions 工作流](https://github.com/buzzingtesting/buzzing-api-tests/actions/workflows/check-framework.yml)
 
 | `m06_operation` | 运行内容 |
 | --- | --- |
@@ -35,13 +43,14 @@
 通过本地密钥配置注入 `BUZZING_REWARDS_ADMIN_TOKEN`，使用具备日期推进权限的 Preview 后台凭证。用户会话复用 `tester1` 的项目收码和缓存配置，也可注入该用户的 `BUZZING_REWARDS_TOKEN`。当前活动场景可直接读回。
 
 ```sh
-BUZZING_ENV=preview python -m function.rewards_simulation --inspect
+BUZZING_ENV=preview python -m pytest testcase/rewards -q -s --m06-operation inspect-admin
 ```
 
-同一 UID 和任务无活动场景时，以新的 UUID 运行两阶段模拟。用同一个 UUID 重试会复用已保存进度。已有活动场景时，脚本要求使用 `--inspect`。
+只读检查用户端可选择 `--m06-operation inspect`，并按需附加 `--m06-scene-version` 或 `--m06-report`。同一 UID 和任务无活动场景时，可用新的 UUID 运行两阶段模拟。用同一个 UUID 重试会复用已保存进度。已有活动场景时，使用 `inspect-admin` 核对。
 
 ```sh
-BUZZING_ENV=preview python -m function.rewards_simulation --run-id 8307eff7-6396-42b9-bbd6-b12b8c82d49b
+BUZZING_ENV=preview python -m pytest testcase/rewards -q -s --m06-operation simulate \
+  --m06-run-id 8307eff7-6396-42b9-bbd6-b12b8c82d49b
 ```
 
 ## 日期工具测试发奖
@@ -51,17 +60,19 @@ BUZZING_ENV=preview python -m function.rewards_simulation --run-id 8307eff7-6396
 | `friends` | 交接中的 `QA1116-06-Friends-Once`，`8d1c5468b058886d6aa902db2d5f5e99` v2。模拟邀请人前置解锁与一位好友的 App 登录及首充。每轮只发放一个 `qualified` 的 `friend:` 单元，额度为 500 cents。任务配置最多计入两位好友。 |
 | `daily` | 开发交接的 `QA1116-03-Daily-Split`，`b41c1081acc145cf586c3d777943f263` v2。仅在隔离场景模拟解锁和首日交易达标，接着推进一个模拟 Manila 日期，核对此次首个奖励单元为 200 cents。 |
 
-默认入口准备场景并保存发奖前 Credit 批次基线。指定 `--grant` 时，脚本核对场景版本、唯一可发奖单元和固定金额，再调用 `grant_rewards`。用同一个 `batch_id` 核对后台与用户任务投影的 `paid` 单元、后台 Credit 发放记录、Profile Credit 历史和唯一 Inbox 通知。Profile Credit 校验批次处于有效状态，发放额和可用额均与预期一致。后台发放记录要求 `source_type=task`、`source_ref=date-test:<task_id>`。这条路径使用 `credit_granted` 通用到账通知，批次带 `[TEST]` 名称。自然发奖的 Rewards 收据通过独立路径核对。 [日期场景发奖实现](https://github.com/Buzzing-Club/buzzing_backend/blob/5c2ca13d4ea1f87eee3b61599c095bed0ba44182/app/voucher-service/internal/service/rewards_date_test_grants.go)
+`prepare` 准备场景并保存发奖前 Credit 批次基线。显式选择 `grant` 时，脚本核对场景版本、唯一可发奖单元和固定金额，再调用 `grant_rewards`。用同一个 `batch_id` 核对后台与用户任务投影的 `paid` 单元、后台 Credit 发放记录、Profile Credit 历史和唯一 Inbox 通知。Profile Credit 校验批次处于有效状态，发放额和可用额均与预期一致。后台发放记录要求 `source_type=task`、`source_ref=date-test:<task_id>`。这条路径使用 `credit_granted` 通用到账通知，批次带 `[TEST]` 名称。自然发奖的 Rewards 收据通过独立路径核对。 [日期场景发奖实现](https://github.com/Buzzing-Club/buzzing_backend/blob/5c2ca13d4ea1f87eee3b61599c095bed0ba44182/app/voucher-service/internal/service/rewards_date_test_grants.go)
 
-以下示例从该好友任务的无活动场景状态开始。显式发奖调用复用准备阶段的运行 ID 和日志目录。接管该任务已有的活动场景时，两条命令均追加实际的 `--scene-version`。普通每日任务使用 `--case daily` 和新的 UUID。
+以下示例从该好友任务的无活动场景状态开始。发奖复用准备阶段的运行 ID 和日志目录。接管该任务已有的活动场景时，两条命令均追加实际的 `--m06-scene-version`。普通每日任务使用 `--m06-case daily` 和新的 UUID。
 
 ```sh
 run_id="$(python -c 'from uuid import uuid4; print(uuid4())')"
-BUZZING_ENV=preview python -m function.rewards_test_payout --case friends --run-id "$run_id"
-BUZZING_ENV=preview python -m function.rewards_test_payout --case friends --run-id "$run_id" --grant
+BUZZING_ENV=preview python -m pytest testcase/rewards -q -s --m06-operation prepare \
+  --m06-case friends --m06-run-id "$run_id"
+BUZZING_ENV=preview python -m pytest testcase/rewards -q -s --m06-operation grant \
+  --m06-case friends --m06-run-id "$run_id"
 ```
 
-每轮确认到账后，脚本在同一场景对同一个单元再次提交，确认批次、后台发放记录和通知均保持唯一。发奖请求超时时，原运行 ID 会复用原请求的幂等键。只有本轮已完成对账时，`--reset-completed` 才会退出该场景，并回查 Credit 批次仍然存在。接着为第二轮使用不同 UUID，好友脚本会生成不同虚拟好友键。两个 `result.json` 可用 `--compare-rounds` 验证场景和批次独立。
+每轮确认到账后，脚本在同一场景对同一个单元再次提交，确认批次、后台发放记录和通知均保持唯一。发奖请求超时时，原运行 ID 会复用原请求的幂等键。从下载的原运行产物续跑时，用 `--m06-resume --m06-journal <产物目录>` 代替用例、运行 ID 和场景版本。只有本轮已完成对账时，`--m06-operation reset` 才会退出该场景，并回查 Credit 批次仍然存在。接着为第二轮使用不同 UUID，好友脚本会生成不同虚拟好友键。两个 `result.json` 可用 `python -m function.rewards_test_payout --compare-rounds` 验证场景和批次独立。
 
 已通过 Preview 后台接口核对 `QA1116-06-Friends-Once` 的任务版本、好友条件、前置解锁和面额。发放、重放和新批次通知的行为已通过离线回归，现场测试 Credit 发放和两轮对账待运行。交接中好友批次 `130`、`131` 是历史到账证据。
 
@@ -118,10 +129,11 @@ BUZZING_ENV=preview python -m function.rewards_test_payout --case friends --run-
 - 受邀人需要能完成邀请确认的用户会话。使用能在窗口内续期的邮箱账号或在第二天注入当日有效凭证。
 
 ```sh
-BUZZING_ENV=preview python -m function.rewards_flow --case .local/rewards/daily-case.json
+BUZZING_ENV=preview python -m pytest testcase/rewards -q -s --m06-operation flow \
+  --m06-case-file .local/rewards/daily-case.json
 ```
 
-普通和好友各调用一次即可完成写入与对账。跨日 Day 1 结束返回 `waiting_day_2`，下一 Manila 自然日用同一用例和证据目录再次调用，完成后返回 `paid`。轮询异步状态默认 90 秒，可用 `--wait-seconds` 配置。已确认的写入保存到 `.local/rewards/<run_id>/`，后续调用只补未完成阶段。绑定回包丢失时从受邀人的关系查询恢复。App 登录结果不明时保留原请求记录，需先通过服务日志确认。
+普通和好友各调用一次即可完成写入与对账。跨日 Day 1 记录 `waiting_day_2` 并在 pytest 中标记跳过，下一 Manila 自然日用同一用例和证据目录再次调用，完成后返回 `paid`。轮询异步状态默认 90 秒，可用 `--m06-wait-seconds` 配置。已确认的写入保存到 `.local/rewards/<run_id>/`，后续调用只补未完成阶段。绑定回包丢失时从受邀人的关系查询恢复。App 登录结果不明时保留原请求记录，需先通过服务日志确认。
 
 证据记录双方 UID、邀请关系、登录响应的服务端 `auth_at`、可用的请求追踪编号，以及回执、批次和通知 ID。凭证、验证码和邀请码由运行进程处理。需要核对实际 outbox 事件时，用登录 UID、`auth_at` 和请求追踪编号与服务日志关联。
 
@@ -132,8 +144,8 @@ BUZZING_ENV=preview python -m function.rewards_flow --case .local/rewards/daily-
 完成发奖后，Rewards 服务可按交接方式重投同一条原始业务事件。将服务记录的 `event_id`、`type`、`uid`、`occurred_at`、`source_ref`、`delivery_id`、`delivered_at` 和 `processed_at` 存为脱敏 JSON，再调用同一入口核对原回执、批次和通知仍唯一。原事件 ID 和处理结果由服务日志提供。
 
 ```sh
-BUZZING_ENV=preview python -m function.rewards_flow --case .local/rewards/daily-case.json \
-  --replay-event .local/rewards/replay-record.json
+BUZZING_ENV=preview python -m pytest testcase/rewards -q -s --m06-operation replay \
+  --m06-case-file .local/rewards/daily-case.json --m06-replay-event .local/rewards/replay-record.json
 ```
 
 `python -m function.rewards_run --help` 提供独立的分阶段查询入口，可用于定位手工触发样本。离线回归使用 `python -m pytest offline_tests -q`。

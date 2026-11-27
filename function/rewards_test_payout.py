@@ -251,6 +251,33 @@ def resume_case(root, configured_cases):
     return run_id, case
 
 
+def run_date_test(operation, *, root, case_name=None, run_id=None, scene_version=None, resume=False, wait_seconds=90):
+    require(get_environment() == "preview", "测试 Credit 发放仅支持 Preview")
+    require(operation in {"prepare", "grant", "reset"}, "未知的 Rewards 日期工具操作")
+    require(0 <= wait_seconds <= 600, "等待秒数须为 0 至 600")
+    data = load_test_data()
+    if resume:
+        require(case_name is None and run_id is None and scene_version is None,
+                "续跑使用产物中的用例、运行 ID 和场景版本")
+        run_id, case = resume_case(root, data["rewards_cases"])
+    else:
+        require(case_name in CASES and run_id is not None, "须指定日期工具用例和运行 ID")
+        case = dict(data["rewards_cases"][CASES[case_name]])
+        if scene_version is not None:
+            require(scene_version > 0, "已有场景版本须为正整数")
+            case["scene_version"] = scene_version
+    admin_token = os.getenv("BUZZING_REWARDS_ADMIN_TOKEN", "").strip().removeprefix("Bearer ")
+    require(admin_token, "缺少 Preview 后台凭证 BUZZING_REWARDS_ADMIN_TOKEN")
+    user_token = os.getenv("BUZZING_REWARDS_TOKEN") or get_test_jwt(case["account"], data[case["account"]])
+    with (create_client(bearer_token=admin_token) as admin,
+          create_client(bearer_token=user_token) as client,
+          simulation_journal(case, root, run_id) as journal):
+        runner = DateTestPayout(admin, RewardsAPI(client, case["uid"], []), case)
+        if operation == "reset":
+            return runner.reset_completed(journal)
+        return runner.run(journal, grant=operation == "grant", wait_seconds=wait_seconds)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     selector = parser.add_mutually_exclusive_group(required=True)
@@ -269,30 +296,9 @@ def main():
         if args.compare_rounds:
             result = compare_rounds(args.compare_rounds)
         else:
-            require(get_environment() == "preview", "测试 Credit 发放仅支持 Preview")
-            require(0 <= args.wait_seconds <= 600, "等待秒数须为 0 至 600")
-            data = load_test_data()
-            if args.resume:
-                require(args.run_id is None and args.scene_version is None, "续跑使用产物中的运行 ID 和场景版本")
-                run_id, case = resume_case(args.journal, data["rewards_cases"])
-            else:
-                require(args.run_id is not None, "须指定运行 ID")
-                run_id = args.run_id
-                case = dict(data["rewards_cases"][CASES[args.case]])
-                if args.scene_version is not None:
-                    require(args.scene_version > 0, "已有场景版本须为正整数")
-                    case["scene_version"] = args.scene_version
-            admin_token = os.getenv("BUZZING_REWARDS_ADMIN_TOKEN", "").strip().removeprefix("Bearer ")
-            require(admin_token, "缺少 Preview 后台凭证 BUZZING_REWARDS_ADMIN_TOKEN")
-            user_token = os.getenv("BUZZING_REWARDS_TOKEN") or get_test_jwt(case["account"], data[case["account"]])
-            with (create_client(bearer_token=admin_token) as admin,
-                  create_client(bearer_token=user_token) as client,
-                  simulation_journal(case, args.journal, run_id) as journal):
-                runner = DateTestPayout(admin, RewardsAPI(client, case["uid"], []), case)
-                if args.reset_completed:
-                    result = runner.reset_completed(journal)
-                else:
-                    result = runner.run(journal, grant=args.grant, wait_seconds=args.wait_seconds)
+            operation = "reset" if args.reset_completed else "grant" if args.grant else "prepare"
+            result = run_date_test(operation, root=args.journal, case_name=args.case, run_id=args.run_id,
+                                   scene_version=args.scene_version, resume=args.resume, wait_seconds=args.wait_seconds)
     except (ValueError, RuntimeError, OSError, KeyError, TypeError, pytest.fail.Exception) as error:
         message = str(error) if isinstance(error, (ValueError, RuntimeError, pytest.fail.Exception)) else type(error).__name__
         raise SystemExit(f"M06 日期工具发奖未完成，{message}") from None

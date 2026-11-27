@@ -97,16 +97,20 @@ jobs:
 
   m06_rewards:
     name: Preview M06 Rewards
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.suite == 'm06_rewards' || inputs.m06_resume_run) }}
+    needs: [scenarios, retry]
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'schedule' ||
+          (github.event_name == 'workflow_dispatch' && (inputs.suite == 'm06_rewards' || inputs.m06_resume_run))) }}
     runs-on: ${{ vars.BUZZING_RUNNER_LABEL || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: read
       actions: read
     env:
-      BUZZING_ENV: ${{ inputs.environment || 'preview' }}
+      BUZZING_ENV: ${{ github.event_name == 'schedule' && 'preview' || inputs.environment || 'preview' }}
     steps:
       - name: Verify M06 selection
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         env:
           M06_SUITE: ${{ inputs.suite }}
@@ -147,14 +151,139 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install dependencies
+        id: m06_dependencies
         run: python -m pip install -r requirements.txt
+      - name: Run scheduled M06 offline tests
+        if: ${{ github.event_name == 'schedule' }}
+        shell: bash
+        run: |
+          mkdir -p reports
+          python -m pytest offline_tests -q -p no:cacheprovider --junitxml=reports/m06-offline-junit.xml 2>&1 | tee reports/m06-offline.log
+      - name: Initialize scheduled M06 login cache
+        id: m06_scheduled_cache
+        if: ${{ !cancelled() && github.event_name == 'schedule' && steps.m06_dependencies.outcome == 'success' }}
+        shell: bash
+        run: |
+          cache_dir="$(mktemp -d "$RUNNER_TEMP/buzzing-auth-XXXXXX")"
+          printf 'BUZZING_AUTH_CACHE_DIR=%s\n' "$cache_dir" >> "$GITHUB_ENV"
+      - name: Restore this scheduled run's journal
+        id: m06_scheduled_restore
+        if: ${{ !cancelled() && github.event_name == 'schedule' && github.run_attempt != '1' && steps.m06_scheduled_cache.outcome == 'success' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: m06-date-test-scheduled-*
+          path: reports/m06-restore
+      - name: Prepare the scheduled daily reward
+        id: m06_scheduled_prepare
+        if: ${{ !cancelled() && github.event_name == 'schedule' && github.run_attempt == '1' && steps.m06_scheduled_cache.outcome == 'success' }}
+        shell: bash
+        env:
+          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
+          BUZZING_REWARDS_ADMIN_TOKEN: ${{ secrets.BUZZING_REWARDS_ADMIN_TOKEN }}
+        run: |
+          mkdir -p reports
+          run_id="$(python -c 'from uuid import uuid4; print(uuid4())')"
+          python -m pytest testcase/rewards -q -s -p no:cacheprovider --tb=short --no-showlocals \
+            --m06-operation prepare --m06-case daily --m06-run-id "$run_id" --m06-journal reports/m06-date-test \
+            --junitxml=reports/m06-prepare-junit.xml 2>&1 | tee reports/m06-prepare.log
+      - name: Save scheduled journal before granting Credit
+        id: m06_scheduled_checkpoint
+        if: ${{ !cancelled() && github.event_name == 'schedule' && steps.m06_scheduled_prepare.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: m06-date-test-scheduled-prepared
+          path: reports/m06-date-test/
+          if-no-files-found: error
+      - name: Grant scheduled Credit and reconcile the batch and notification
+        id: m06_scheduled_grant
+        if: >-
+          ${{ !cancelled() && github.event_name == 'schedule' &&
+              (steps.m06_scheduled_checkpoint.outcome == 'success' || steps.m06_scheduled_restore.outcome == 'success') }}
+        shell: bash
+        env:
+          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
+          BUZZING_REWARDS_ADMIN_TOKEN: ${{ secrets.BUZZING_REWARDS_ADMIN_TOKEN }}
+        run: |
+          journal=reports/m06-date-test
+          if [[ "$GITHUB_RUN_ATTEMPT" != 1 ]]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          restored = Path("reports/m06-restore")
+          prefix = "m06-date-test-scheduled-"
+          # The action extracts a single matching artifact directly into its target directory.
+          journals = [((-1, 0), restored)] if len(list(restored.glob("*/case.json"))) == 1 else []
+          for candidate in restored.glob(f"{prefix}*"):
+              suffix = candidate.name.removeprefix(prefix)
+              attempt = suffix.removeprefix("reconciled-")
+              if suffix == "prepared":
+                  rank = (0, 0)
+              elif attempt.isascii() and attempt.isdecimal():
+                  rank = (int(attempt), 2 if suffix == attempt else 1)
+              else:
+                  continue
+              if len(list(candidate.glob("*/case.json"))) == 1:
+                  journals.append((rank, candidate))
+          if not journals:
+              raise SystemExit("No valid M06 journal from this scheduled run. No grant was attempted by this retry.")
+          _, latest = max(journals)
+          case = json.loads(next(latest.glob("*/case.json")).read_text(encoding="utf-8"))
+          if case.get("scenario") != "daily":
+              raise SystemExit("This scheduled run can only resume the daily Rewards case.")
+          latest.rename("reports/m06-date-test")
+          PY
+          fi
+          python -m pytest testcase/rewards -q -s -p no:cacheprovider --tb=short --no-showlocals \
+            --m06-operation grant --m06-resume --m06-journal "$journal" \
+            --junitxml=reports/m06-grant-junit.xml 2>&1 | tee reports/m06-grant.log
+      - name: Save reconciled scheduled payout before closing its scene
+        id: m06_scheduled_reconciled
+        if: ${{ !cancelled() && github.event_name == 'schedule' && steps.m06_scheduled_grant.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: m06-date-test-scheduled-reconciled-${{ github.run_attempt }}
+          path: reports/m06-date-test/
+          if-no-files-found: error
+      - name: Close the reconciled scheduled scene and confirm Credit remains
+        if: ${{ !cancelled() && github.event_name == 'schedule' && steps.m06_scheduled_reconciled.outcome == 'success' }}
+        shell: bash
+        env:
+          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
+          BUZZING_REWARDS_ADMIN_TOKEN: ${{ secrets.BUZZING_REWARDS_ADMIN_TOKEN }}
+        run: |
+          python -m pytest testcase/rewards -q -s -p no:cacheprovider --tb=short --no-showlocals \
+            --m06-operation reset --m06-resume --m06-journal reports/m06-date-test \
+            --junitxml=reports/m06-reset-junit.xml 2>&1 | tee reports/m06-reset.log
+      - name: Upload scheduled M06 journal
+        if: ${{ always() && github.event_name == 'schedule' && hashFiles('reports/m06-date-test/*/case.json') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: m06-date-test-scheduled-${{ github.run_attempt }}
+          path: reports/m06-date-test/
+          if-no-files-found: error
+      - name: Read scheduled M06 Rewards snapshot
+        if: ${{ !cancelled() && github.event_name == 'schedule' && steps.m06_scheduled_cache.outcome == 'success' }}
+        shell: bash
+        env:
+          BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
+        run: |
+          mkdir -p reports
+          python -m pytest testcase/rewards -q -s -p no:cacheprovider --tb=short --no-showlocals \
+            --m06-operation snapshot --m06-report reports/m06-rewards.json \
+            --junitxml=reports/m06-preview-junit.xml 2>&1 | tee reports/m06-rewards.log
+      - name: Remove scheduled M06 login cache
+        if: ${{ always() && github.event_name == 'schedule' && steps.m06_scheduled_cache.outcome == 'success' }}
+        shell: bash
+        run: rm -rf -- "$BUZZING_AUTH_CACHE_DIR"
       - name: Check API access
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
           mkdir -p reports
           python -m function.preview_access 2>&1 | tee reports/api-access.log
       - name: Verify M06 journal source
-        if: ${{ inputs.m06_resume_run != '' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.m06_resume_run != '' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -176,7 +305,7 @@ jobs:
               sys.exit("Resume requires a completed manual run of this workflow on the same branch and repository.")
           '
       - name: Restore M06 journal
-        if: ${{ inputs.m06_resume_run != '' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.m06_resume_run != '' }}
         uses: actions/download-artifact@v8
         with:
           name: m06-date-test
@@ -185,6 +314,7 @@ jobs:
           run-id: ${{ inputs.m06_resume_run }}
       - name: Check M06 Rewards with the tester1 session
         id: m06_rewards
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         env:
           BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
@@ -197,30 +327,23 @@ jobs:
           cache_dir="$(mktemp -d "$RUNNER_TEMP/buzzing-auth-XXXXXX")"
           trap 'rm -rf -- "$cache_dir"' EXIT
           export BUZZING_AUTH_CACHE_DIR="$cache_dir"
+          args=(--m06-operation "$M06_OPERATION")
           if [[ "$M06_OPERATION" == inspect ]]; then
-            args=(--inspect-user --report reports/m06-rewards.json)
-            if [[ -n "$M06_SCENE_VERSION" ]]; then
-              args+=(--expected-version "$M06_SCENE_VERSION")
-            fi
-            python -m function.rewards_simulation "${args[@]}" 2>&1 | tee reports/m06-rewards.log
+            args+=(--m06-report reports/m06-rewards.json)
           else
-            args=(--journal reports/m06-date-test)
+            args+=(--m06-journal reports/m06-date-test)
             if [[ -n "$M06_RESUME_RUN" ]]; then
-              args+=(--resume)
+              args+=(--m06-resume)
             else
-              args+=(--case "$M06_CASE" --run-id "$(python -c 'from uuid import uuid4; print(uuid4())')")
-              if [[ -n "$M06_SCENE_VERSION" ]]; then
-                args+=(--scene-version "$M06_SCENE_VERSION")
-              fi
+              args+=(--m06-case "$M06_CASE" --m06-run-id "$(python -c 'from uuid import uuid4; print(uuid4())')")
             fi
-            case "$M06_OPERATION" in
-              grant) args+=(--grant) ;;
-              reset) args+=(--reset-completed) ;;
-            esac
-            python -m function.rewards_test_payout "${args[@]}" 2>&1 | tee reports/m06-rewards.log
           fi
+          if [[ -n "$M06_SCENE_VERSION" ]]; then
+            args+=(--m06-scene-version "$M06_SCENE_VERSION")
+          fi
+          python -m pytest testcase/rewards -q -s --tb=short --no-showlocals "${args[@]}" 2>&1 | tee reports/m06-rewards.log
       - name: Upload M06 journal for continuation
-        if: ${{ always() && steps.m06_rewards.outcome != 'skipped' && hashFiles('reports/m06-date-test/*/case.json') != '' }}
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && steps.m06_rewards.outcome != 'skipped' && hashFiles('reports/m06-date-test/*/case.json') != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: m06-date-test
@@ -230,7 +353,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.BUZZING_ENV }}-scenarios
+          name: >-
+            ${{ github.event_name == 'schedule' && format('preview-m06-rewards{0}', github.run_attempt != '1' && format('-attempt-{0}', github.run_attempt) || '')
+                || format('{0}-scenarios', env.BUZZING_ENV) }}
           path: |
             reports/api-access.log
-            reports/m06-rewards.*
+            reports/m06-rewards.json
+            reports/m06-*.log
+            reports/m06-*-junit.xml

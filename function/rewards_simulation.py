@@ -95,9 +95,11 @@ class DateTestSimulation:
         journal.save(phase, scene)
         return scene
 
-    def credit_baseline(self):
+    def credit_baseline(self, *, receipt_revision=None):
+        if receipt_revision is None:
+            receipt_revision = self.user.get(f"{REWARDS}/overview")["receipt_revision"]
         return {
-            "receipt_revision": number(self.user.get(f"{REWARDS}/overview")["receipt_revision"]),
+            "receipt_revision": number(receipt_revision),
             "batch_ids": self.batch_ids(),
             "notice_ids": self.notice_ids(),
         }
@@ -129,16 +131,25 @@ class FriendSimulation(DateTestSimulation):
         actual = {row["id"]: row.get("done") is True for row in rows(friend, "progress")}
         require(actual == expected, "模拟好友的条件进度与本轮预期不一致")
 
+    def user_projection(self):
+        return self.user.get(self.user_path), self.user.get(f"{self.user_path}/friends", page_size=20)
+
+    def projection_version(self, detail, page):
+        task_context, friends_context = detail.get("test_context"), page.get("test_context")
+        if task_context is None and friends_context is None:
+            return None
+        require(isinstance(task_context, dict) and isinstance(friends_context, dict),
+                "任务详情和好友列表的模拟场景不一致")
+        version = number(task_context.get("version"))
+        require(version > 0 and number(friends_context.get("version")) == version,
+                "用户侧未读取到同一模拟场景版本")
+        return version
+
     def verify_user_projection(self, *, done, expected_version=None, friend_id=None):
-        detail = self.user.get(self.user_path)
-        page = self.user.get(f"{self.user_path}/friends", page_size=20)
-        versions = []
-        for reply in (detail, page):
-            context = reply.get("test_context")
-            require(isinstance(context, dict), "用户侧未读取到活动的模拟场景")
-            versions.append(number(context.get("version")))
-        version = versions[0]
-        require(version > 0 and versions[1] == version and (expected_version is None or version == expected_version),
+        detail, page = self.user_projection()
+        version = self.projection_version(detail, page)
+        require(version is not None, "用户侧未读取到活动的模拟场景")
+        require(expected_version is None or version == expected_version,
                 "用户侧未读取到同一模拟场景版本")
         require(page.get("has_more") is not True, "模拟好友列表超出本轮预期数量")
         friend = one(rows(page, "friends"), "用户侧应只返回本轮的一位模拟好友")
@@ -157,15 +168,35 @@ class FriendSimulation(DateTestSimulation):
                                              friend_id=projection["id"])
         return {**result, "friend_key": key}
 
-    def inspect_user(self, expected_version):
-        result = self.verify_user_projection(done=True, expected_version=expected_version)
+    def user_snapshot(self, result, *, receipt_revision=None):
         receipts = self.task_receipts(0)
         return {
             **result, "account": self.case["account"], "uid": self.case["uid"], "task_id": self.case["task_id"],
-            "credit_and_notifications_snapshot": self.credit_baseline(),
+            "credit_and_notifications_snapshot": self.credit_baseline(receipt_revision=receipt_revision),
             "task_receipts": [{key: row.get(key) for key in ("revision", "unit_id", "batch_id", "amount_cents", "paid_at")}
                               for row in receipts],
         }
+
+    def inspect_user(self, expected_version):
+        return self.user_snapshot(self.verify_user_projection(done=True, expected_version=expected_version))
+
+    def snapshot_user(self):
+        overview = self.user.get(f"{REWARDS}/overview")
+        tasks = rows(overview, "tasks") if "tasks" in overview else []
+        task_id = self.case["task_id"]
+        visible = any((row.get("task") or {}).get("id") == task_id for row in tasks)
+        result = {"observed_at": now().isoformat(), "task_visible": visible}
+        if visible:
+            detail, page = self.user_projection()
+            task = detail["task"]
+            require(task["id"] == task_id and number(task["version"]) == self.case["task_version"],
+                    "用户侧好友任务 ID 或版本与当前配置不一致")
+            version = self.projection_version(detail, page)
+            friends = rows(page, "friends") if "friends" in page else []
+            result.update(scene_active=version is not None, version=version,
+                          done_count=number(page.get("done_count", 0)), friends_on_page=len(friends),
+                          task_qualified=detail.get("qualified") is True)
+        return self.user_snapshot(result, receipt_revision=overview.get("receipt_revision", 0))
 
     def run(self, journal):
         final = journal.load("result")
@@ -209,6 +240,38 @@ class FriendSimulation(DateTestSimulation):
         return self.verify_projection(scene, entry["key"], checks[self.case["friend_conditions"]["deposit"]])
 
 
+def run_simulation(operation, *, root, run_id=None, expected_version=None, report=None):
+    require(get_environment() == "preview", "Rewards 模拟仅支持 Preview")
+    require(operation in {"snapshot", "inspect", "inspect-admin", "simulate"}, "未知的 Rewards 模拟操作")
+    require((run_id is not None) == (operation == "simulate"), "仅模拟推进须指定运行 ID")
+    require(expected_version is None or (operation == "inspect" and expected_version > 0),
+            "仅用户端只读检查可指定正整数场景版本")
+    data = load_test_data()
+    case = dict(data["rewards_cases"][CASE_NAME])
+    admin_token = os.getenv("BUZZING_REWARDS_ADMIN_TOKEN", "").strip().removeprefix("Bearer ")
+    require(operation in {"snapshot", "inspect"} or admin_token, "缺少 BUZZING_REWARDS_ADMIN_TOKEN")
+    user_token = os.getenv("BUZZING_REWARDS_TOKEN") or get_test_jwt(case["account"], data[case["account"]])
+    with create_client(bearer_token=user_token) as client:
+        user = RewardsAPI(client, case["uid"], [])
+        if operation == "snapshot":
+            result = FriendSimulation(None, user, case).snapshot_user()
+        elif operation == "inspect":
+            result = FriendSimulation(None, user, case).inspect_user(expected_version)
+        else:
+            with create_client(bearer_token=admin_token) as admin:
+                simulation = FriendSimulation(admin, user, case)
+                if operation == "inspect-admin":
+                    result = simulation.inspect()
+                else:
+                    result = run_new_scene(simulation, root, run_id)
+    if report is not None:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        with report.open("x", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group(required=True)
@@ -219,31 +282,10 @@ def main():
     parser.add_argument("--report", type=Path, help="Write a new JSON evidence file")
     parser.add_argument("--journal", type=Path, default=Path(".local/rewards/simulation"))
     args = parser.parse_args()
+    operation = "inspect" if args.inspect_user else "inspect-admin" if args.inspect else "simulate"
     try:
-        require(get_environment() == "preview", "Rewards 模拟仅支持 Preview")
-        require(args.expected_version is None or (args.inspect_user and args.expected_version > 0),
-                "--expected-version 仅用于 --inspect-user，须为正整数")
-        data = load_test_data()
-        case = dict(data["rewards_cases"][CASE_NAME])
-        admin_token = os.getenv("BUZZING_REWARDS_ADMIN_TOKEN", "").strip().removeprefix("Bearer ")
-        require(args.inspect_user or admin_token, "缺少 BUZZING_REWARDS_ADMIN_TOKEN")
-        user_token = os.getenv("BUZZING_REWARDS_TOKEN") or get_test_jwt(case["account"], data[case["account"]])
-        with create_client(bearer_token=user_token) as client:
-            user = RewardsAPI(client, case["uid"], [])
-            if args.inspect_user:
-                result = FriendSimulation(None, user, case).inspect_user(args.expected_version)
-            else:
-                with create_client(bearer_token=admin_token) as admin:
-                    simulation = FriendSimulation(admin, user, case)
-                    if args.inspect:
-                        result = simulation.inspect()
-                    else:
-                        result = run_new_scene(simulation, args.journal, args.run_id)
-        if args.report is not None:
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            with args.report.open("x", encoding="utf-8") as stream:
-                json.dump(result, stream, ensure_ascii=False, indent=2)
-                stream.write("\n")
+        result = run_simulation(operation, root=args.journal, run_id=args.run_id,
+                                expected_version=args.expected_version, report=args.report)
     except (ValueError, RuntimeError, OSError, KeyError, TypeError, pytest.fail.Exception) as error:
         detail = str(error) if isinstance(error, (ValueError, RuntimeError, pytest.fail.Exception)) else type(error).__name__
         raise SystemExit(f"M06 模拟未完成，{detail}") from None

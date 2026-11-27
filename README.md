@@ -32,7 +32,7 @@
 3. **按接口契约写断言**。原生 JSON 用 `expect_native()` 检查 HTTP 状态和 schema，包装响应 `EnvelopeReply` 用 `expect_envelope()` 检查 HTTP 状态和业务码。用 `allure.title` 和 `allure.step` 写清场景名称和业务步骤。 [响应校验方法](function/response_checks.py)
 4. **在 Preview 验证**。先单跑修改的用例，再用 `run.py --env preview` 跑日常套件并查看 Allure。日常用例合入 `main` 后由定时工作流收集。受控交易使用 `--trade-run`，生产回归使用下方的标记规则。
 
-所有接口场景都维护在 `testcase/`，使用真实 Preview API 响应做断言。交易用例需要对应的市场、账号和资金等测试数据。
+所有接口场景都维护在 `testcase/`，使用真实 Preview API 响应做断言。交易用例需要对应的市场、账号和资金等测试数据。M06 Rewards 通过 `--m06-operation` 单独选择操作。
 
 场景所需的筛选条件和查询参数按模块写在 `market_cases` 段。BTC 1h、XRP 日档的系列名用于指定覆盖的市场类型，每次从 Preview 回包获取市场 ID 和游标。电竞 Props 的联赛由本轮导航返回。 [场景配置](ci.yaml)
 
@@ -45,6 +45,8 @@
 | [limit_order](testcase/limit_order) | 限价单 | 限价买卖、同计划重放、零成交撤单、部分成交撤余单、Cash/Credit 出资、余额与份额不足、本人历史和逻辑订单筛选。 |
 | [position](testcase/position) | Position 持仓 | 查询未平和已关闭持仓，校验账号归属、字段、分页和空列表。 |
 | [settlement](testcase/settlement) | 市场争议与结算 | 日常核对结算历史、已结算持仓的领取状态，以及争议中市场的再次发起资格。公示窗内的争议资格用例在发版回归时手动运行。 |
+| [rewards](testcase/rewards) | Rewards | M06 好友进度检查与模拟、日期工具准备与测试发奖、已完成场景重置、普通任务、好友绑定、真实跨日和重投对账。 [运行说明](docs/m06-rewards.md) |
+| [M06 Rewards 离线用例](offline_tests) | — | 覆盖好友进度、普通任务、跨日、测试发奖、Credit 与 Inbox 对账、重放幂等和续跑。执行 `python -m pytest offline_tests -q`。 |
 
 市场详情和盘口用例在 Allure 的选样步骤附上「本轮选中市场」，记录事件标题和 ID，以及该场景使用的比赛或市场 ID。
 
@@ -105,9 +107,9 @@ Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。本地 
 
 ## GitHub Actions 运行计划
 
-**定时执行**在 [`check-framework.yml`](.github/workflows/check-framework.yml) 的 `on.schedule` 维护。当前为 `0 18 * * *`，时区为 `Asia/Shanghai`，每天北京时间 **18:00** 计划触发 Preview 场景。修改后提交到默认分支 `main`。
+**定时执行**在 [`check-framework.yml`](.github/workflows/check-framework.yml) 的 `on.schedule` 维护。每天北京时间 **18:00** 触发 Preview 回归，同一轮在常规回归和补跑结束后执行 M06。M06 运行离线测试，通过日期工具为 `tester1` 实际发放一笔 200 cents 的 Preview 测试 Credit，对账到账与 Inbox 通知，并保存用户端快照。修改后提交到默认分支 `main`。
 
-**手动执行**在 [Actions → Buzzing API scenarios](https://github.com/buzzingtesting/buzzing-api-tests/actions/workflows/check-framework.yml) 点击 **Run workflow**。默认使用 Preview 和 `suite=regression`，三个争议市场 ID 都留空时执行与定时任务相同的套件。Production 回归可用 `access_only` 只做预检。
+**手动执行**在 [Actions → Buzzing API scenarios](https://github.com/buzzingtesting/buzzing-api-tests/actions/workflows/check-framework.yml) 点击 **Run workflow**。默认使用 Preview 和 `suite=regression`，三个争议市场 ID 都留空时执行常规回归。Production 回归可用 `access_only` 只做预检。
 
 **发版争议回归**使用仍在公示窗内的 Preview 自营市场。`dispute_market_id` 填 CI 账号有持仓的市场，`dispute_no_position_market_id` 填同一账号无持仓的市场。Allure 分别显示匿名、已登录有持仓和已登录无持仓的争议资格。各场景按对应市场 ID 执行，留空时记录跳过原因。
 
@@ -125,7 +127,7 @@ Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。本地 
 .venv/bin/python run.py --env preview --disputed-market-id DISPUTED_MARKET_ID
 ```
 
-运行 M06 时，选择 Preview 和 `suite=m06_rewards`，取消勾选 `access_only`，三个争议市场 ID 留空。M06 使用 `tester1` 的现有 Gmail Secret 登录。日期工具写入的阶段记录保存在 `m06-date-test` 产物中，通过 `m06_resume_run` 恢复原轮次。 [M06 运行说明](docs/m06-rewards.md)
+手动运行 M06 时，选择 Preview 和 `suite=m06_rewards`，取消勾选 `access_only`，三个争议市场 ID 留空。M06 使用 `tester1` 的现有 Gmail Secret 登录。手动场景准备、发奖和重置通过 `m06_operation` 选择，阶段记录保存在 `m06-date-test` 产物中，通过 `m06_resume_run` 恢复原轮次。 [M06 运行说明](docs/m06-rewards.md)
 
 CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LABEL` 可指定 Runner 标签。Preview CI 默认从公司邮箱取验证码，使用 `ci.yaml` 中的 `ci_tester`。仓库变量 `BUZZING_PREVIEW_TESTDATA` 可切换 Preview CI 使用的账号。
 
@@ -135,6 +137,7 @@ CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LAB
 
 - **本地**。每轮结果保存在 `reports/run-*`。本机安装 Allure CLI 后，可用浏览器打开 `reports/allure-report/index.html` 查看最新一轮。概览显示当前环境、API 地址和默认账号。
 - **GitHub Actions**。打开运行记录的 **Artifacts**，下载 `preview-allure-report`，解压后在浏览器打开 `index.html`。预检日志、JUnit 和场景日志在 `preview-scenarios` 中。自动补跑的产物名称带 `-retry`。下载需要登录有私有仓库访问权限的 GitHub 账号。
+- **M06 定时结果**。在同一轮 Actions 的 `preview-m06-rewards` 产物查看离线、发奖、重置与快照的 JUnit 和日志。对账批次、通知和续跑记录保存在 `m06-date-test-scheduled-*` 产物中。
 - **邮件**。完整 Preview 场景结束后，公司邮箱 `dejian.ding@trufflelabs.ai` 向 `BUZZING_REPORT_TO` 指定的地址发送结果及报告链接。仓库变量 `BUZZING_REPORT_FROM` 保存发件地址。若收件箱没有邮件，可先检查运行记录的 **Email the Preview report** 步骤和收件邮箱的垃圾邮件。
 - **Lark**。每轮 Preview 场景结束后，原群机器人发送结果卡片，附用例统计、Allure 下载和 Actions 链接。每日定时运行及其自动补跑也会发送到第二个群。自动补跑的卡片标注「自动补跑」。排查推送时查看对应的 Lark 通知步骤。
 
