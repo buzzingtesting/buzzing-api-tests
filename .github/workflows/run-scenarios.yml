@@ -30,7 +30,7 @@ on:
 
 jobs:
   scenarios:
-    runs-on: ${{ vars.BUZZING_RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ vars.BUZZING_RUNNER_LABEL || 'ubuntu-24.04' }}
     timeout-minutes: 20
     outputs:
       test_outcome: ${{ steps.scenario_tests.outputs.test_outcome || steps.scenario_tests.outcome }}
