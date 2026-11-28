@@ -180,6 +180,7 @@ jobs:
         env:
           BUZZING_GMAIL_APP_PASSWORD: ${{ secrets.BUZZING_GMAIL_APP_PASSWORD }}
           BUZZING_REWARDS_ADMIN_TOKEN: ${{ secrets.BUZZING_REWARDS_ADMIN_TOKEN }}
+          BUZZING_SKIP_M06_AUTH_SETUP: '1'
         run: |
           mkdir -p reports
           run_id="$(python -c 'from uuid import uuid4; print(uuid4())')"
@@ -188,7 +189,9 @@ jobs:
             --junitxml=reports/m06-prepare-junit.xml 2>&1 | tee reports/m06-prepare.log
       - name: Save scheduled journal before granting Credit
         id: m06_scheduled_checkpoint
-        if: ${{ !cancelled() && github.event_name == 'schedule' && steps.m06_scheduled_prepare.outcome == 'success' }}
+        if: >-
+          ${{ !cancelled() && github.event_name == 'schedule' && steps.m06_scheduled_prepare.outcome == 'success' &&
+              hashFiles('reports/m06-date-test/*/case.json') != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: m06-date-test-scheduled-prepared

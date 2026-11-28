@@ -16,7 +16,7 @@
 
 每天北京时间 18:00 的 Preview 工作流在常规回归和可能的补跑结束后执行 M06。使用 `tester1`（UID `991039`）和 `QA1116-03-Daily-Split` v2 准备一个可发奖单元，通过日期工具实际发放一笔 200 cents 的 `[TEST]` Credit。按同一个 `batch_id` 核对后台发奖记录、用户任务投影、可用 Credit 和唯一 Inbox 通知。确认对账和幂等后，退出本轮模拟场景并回查 Credit 仍在。已到账的测试 Credit 会保留在 Preview 账号。
 
-定时执行依赖仓库的 `BUZZING_GMAIL_APP_PASSWORD` 和有日期工具权限的 `BUZZING_REWARDS_ADMIN_TOKEN`。发奖前和对账后会保存运行记录。重跑同一轮 Actions 会从 `m06-date-test-scheduled-*` 恢复原运行和幂等键。没有可恢复记录时，重跑会失败。新一轮若发现同一账号和任务还有活动场景，会停止准备并保留场景，以便核对原轮次。普通任务、真实好友绑定和真实跨日从各自的业务事件入口运行。
+定时执行依赖仓库的 `BUZZING_GMAIL_APP_PASSWORD` 和有日期工具权限的 `BUZZING_REWARDS_ADMIN_TOKEN`。凭证缺失或后台初始化请求返回 401/403 时，JUnit 记录发奖准备为跳过，用户端快照照常执行。发奖前和对账后会保存运行记录。重跑同一轮 Actions 会从 `m06-date-test-scheduled-*` 恢复原运行和幂等键。没有可恢复记录时，重跑会失败。新一轮若发现同一账号和任务还有活动场景，会停止准备并保留场景，以便核对原轮次。普通任务、真实好友绑定和真实跨日从各自的业务事件入口运行。
 
 同一轮 Actions 也执行离线回归和用户端只读快照。配置的好友任务对账号不可见时，保存账务快照并将好友检查标为跳过。日志、JUnit 和快照在 `preview-m06-rewards` 产物，发奖账务证据与续跑记录在 `m06-date-test-scheduled-*` 产物。
 

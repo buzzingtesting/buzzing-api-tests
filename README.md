@@ -129,7 +129,7 @@ Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。本地 
 
 手动运行 M06 时，选择 Preview 和 `suite=m06_rewards`，取消勾选 `access_only`，三个争议市场 ID 留空。M06 使用 `tester1` 的现有 Gmail Secret 登录。手动场景准备、发奖和重置通过 `m06_operation` 选择，阶段记录保存在 `m06-date-test` 产物中，通过 `m06_resume_run` 恢复原轮次。 [M06 运行说明](docs/m06-rewards.md)
 
-常规 CI 默认使用 GitHub 托管的 `ubuntu-24.04`，与钱包签名所需的 Playwright 版本兼容。M06 Rewards 默认使用 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LABEL` 可指定 Runner 标签。Preview CI 默认从公司邮箱取验证码，使用 `ci.yaml` 中的 `ci_tester`。仓库变量 `BUZZING_PREVIEW_TESTDATA` 可切换 Preview CI 使用的账号。
+常规 CI 默认使用 GitHub 托管的 `ubuntu-24.04`，与钱包签名所需的 Playwright 版本兼容。签名依赖无法安装或启动时，自营零成交撤单用例会在报告中记录为跳过，其余用例照常执行。M06 Rewards 默认使用 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LABEL` 可指定 Runner 标签。Preview CI 默认从公司邮箱取验证码，使用 `ci.yaml` 中的 `ci_tester`。仓库变量 `BUZZING_PREVIEW_TESTDATA` 可切换 Preview CI 使用的账号。
 
 每轮 CI 从空的登录缓存开始，本轮 JWT 存在独立临时目录，场景执行结束时清理。CI 禁用 pytest 缓存，Allure、JUnit 和脱敏日志通过 Artifacts 查看。
 

@@ -1,12 +1,15 @@
 import json
+import os
 from pathlib import Path
 
 import allure
 import pytest
 
+from function.api_client import create_client, request
 from function.reporting import PROJECT_NAME
+from function.response_checks import expect_json
 from function.rewards_flow import flow_case, run_flow
-from function.rewards_simulation import run_simulation
+from function.rewards_simulation import ADMIN, run_simulation
 from function.rewards_test_payout import run_date_test
 
 
@@ -56,6 +59,15 @@ def test_friend_progress(pytestconfig, operation):
     pytest.param("reset", "reset", marks=pytest.mark.m06_operation("reset"), id="reset"),
 ])
 def test_date_tool(pytestconfig, operation, expected_status):
+    if operation == "prepare" and os.getenv("BUZZING_SKIP_M06_AUTH_SETUP") == "1":
+        admin_token = os.getenv("BUZZING_REWARDS_ADMIN_TOKEN", "").strip().removeprefix("Bearer ")
+        if not admin_token:
+            pytest.skip("M06 后台凭证未配置，跳过定时发奖准备")
+        with create_client(bearer_token=admin_token) as client:
+            response = request(client, "GET", f"{ADMIN}/tasks", operation="rewards_date_test_preflight")
+        if response.status_code in (401, 403):
+            pytest.skip(f"M06 后台凭证或访问权限未就绪（HTTP {response.status_code}），跳过定时发奖准备")
+        expect_json(response, 200)
     result = run_date_test(
         operation,
         root=pytestconfig.getoption("--m06-journal") or SIMULATION_JOURNAL,

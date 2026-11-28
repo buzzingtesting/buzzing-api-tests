@@ -84,17 +84,27 @@ jobs:
           tar -xzf "$RUNNER_TEMP/allure.tgz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/allure-${allure_version}/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-node@v6
+        id: wallet_signer_node
         if: ${{ env.ENABLE_PREVIEW_WALLET_SIGNER == 'true' }}
+        continue-on-error: true
         with:
           node-version: '24'
       - name: Set up Preview wallet signer
-        if: ${{ env.ENABLE_PREVIEW_WALLET_SIGNER == 'true' }}
+        id: wallet_signer_setup
+        if: ${{ steps.wallet_signer_node.outcome == 'success' }}
+        continue-on-error: true
         shell: bash
         run: |
           npm exec --yes --package=pnpm@11.25.0 -- pnpm --dir privy_signer install --frozen-lockfile
           npm exec --yes --package=pnpm@11.25.0 -- pnpm --dir privy_signer run build
           python -m pip install -r privy_signer/requirements.txt
           python -m playwright install --with-deps chromium --only-shell
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          with sync_playwright() as playwright:
+              playwright.chromium.launch().close()
+          PY
       - name: Run scenario tests
         id: scenario_tests
         if: ${{ env.BUZZING_ENV == 'preview' || !inputs.access_only }}
@@ -104,6 +114,7 @@ jobs:
           BUZZING_RETRY_ROUND: ${{ inputs.retry }}
           BUZZING_RETRY_CASES: ${{ inputs.retry_cases }}
           BUZZING_REQUIRE_FULL_PREVIEW: ${{ env.ENABLE_PREVIEW_TRADES == 'true' && '1' || '' }}
+          BUZZING_WALLET_SIGNER_SETUP_FAILED: ${{ env.ENABLE_PREVIEW_WALLET_SIGNER == 'true' && steps.wallet_signer_setup.outcome != 'success' && '1' || '' }}
           BUZZING_B3_FIXTURES: ${{ env.ENABLE_PREVIEW_TRADES == 'true' && vars.BUZZING_B3_FIXTURES || '' }}
           BUZZING_OWN_TRADE_RUNS: ${{ env.ENABLE_PREVIEW_TRADES == 'true' && vars.BUZZING_OWN_TRADE_RUNS || '' }}
           BUZZING_OWN_PARTIAL_MAX_BUDGET_RAW: ${{ vars.BUZZING_OWN_PARTIAL_MAX_BUDGET_RAW }}

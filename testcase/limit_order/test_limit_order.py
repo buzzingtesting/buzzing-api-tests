@@ -1,3 +1,5 @@
+import os
+
 import allure
 import pytest
 
@@ -29,6 +31,8 @@ def test_limit_partial_cancel_no(run_trade):
 
 @allure.title("自营限价买入 · 零成交挂单、撤单与可用余额恢复")
 @pytest.mark.m03_case(LIMIT_CANCEL)
+@pytest.mark.skipif(os.getenv("BUZZING_WALLET_SIGNER_SETUP_FAILED") == "1",
+                    reason="Preview 钱包签名依赖初始化失败，见 Actions 安装步骤")
 def test_own_limit_cancel_restores_available_cash(run_trade):
     run_trade()
 
