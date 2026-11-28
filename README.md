@@ -136,10 +136,10 @@ CI 默认用 GitHub 托管的 `ubuntu-latest`。仓库变量 `BUZZING_RUNNER_LAB
 ## 查看报告和通知
 
 - **本地**。每轮结果保存在 `reports/run-*`。本机安装 Allure CLI 后，可用浏览器打开 `reports/allure-report/index.html` 查看最新一轮。概览显示当前环境、API 地址和默认账号。
-- **GitHub Actions**。打开运行记录的 **Artifacts**，下载 `preview-allure-report`，解压后在浏览器打开 `index.html`。预检日志、JUnit 和场景日志在 `preview-scenarios` 中。自动补跑的产物名称带 `-retry`。下载需要登录有私有仓库访问权限的 GitHub 账号。
+- **GitHub Actions**。打开运行记录的 **Artifacts**，点击 `preview-allure-report.html` 在浏览器中查看单文件报告。`preview-allure-report` 提供 ZIP 下载。预检日志、JUnit 和场景日志在 `preview-scenarios` 中。自动补跑的产物名称带 `-retry`。查看和下载都需要登录有私有仓库访问权限的 GitHub 账号。
 - **M06 定时结果**。在同一轮 Actions 的 `preview-m06-rewards` 产物查看离线、发奖、重置与快照的 JUnit 和日志。对账批次、通知和续跑记录保存在 `m06-date-test-scheduled-*` 产物中。
 - **邮件**。完整 Preview 场景结束后，公司邮箱 `dejian.ding@trufflelabs.ai` 向 `BUZZING_REPORT_TO` 指定的地址发送结果及报告链接。仓库变量 `BUZZING_REPORT_FROM` 保存发件地址。若收件箱没有邮件，可先检查运行记录的 **Email the Preview report** 步骤和收件邮箱的垃圾邮件。
-- **Lark**。每轮 Preview 场景结束后，原群机器人发送结果卡片，附用例统计、Allure 下载和 Actions 链接。每日定时运行及其自动补跑也会发送到第二个群。自动补跑的卡片标注「自动补跑」。排查推送时查看对应的 Lark 通知步骤。
+- **Lark**。每轮 Preview 场景结束后，原群机器人发送结果卡片，附用例统计、「查看 Allure 测试报告」和 Actions 链接。在线报告上传失败时提供 ZIP 下载入口。每日定时运行及其自动补跑也会发送到第二个群。自动补跑的卡片标注「自动补跑」。排查推送时查看对应的 Lark 通知步骤。
 
 完整 Preview 首轮有失败用例时，GitHub Actions 用该轮记录的 pytest 用例 ID 补跑一次。补跑使用新登录缓存，并独立上传报告、发送邮件和通知。已尝试提交或撤单的用例，以及依赖首轮买单的用例，会在补跑报告中记录跳过原因，按首轮订单标识回查。本地用 `run.py --retry-cases <首轮报告目录>/retry-cases.json` 指定失败清单，受控交易用例同时传入本轮对应的 `--trade-run` 参数。
 

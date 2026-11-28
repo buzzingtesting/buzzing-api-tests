@@ -12,12 +12,17 @@ import httpx
 from function.reporting import junit_summary
 
 
-def build_card(summary, outcome, run_url, report_url, *, report_round=""):
+def build_card(summary, outcome, run_url, artifact_url, *, report_view_url="", report_round=""):
     label = "测试通过" if outcome == "success" else "完成"
     title = f"Buzzing Preview 接口自动化 · {label}"
     if report_round:
         title += f"（{report_round}）"
-    report = f"[下载 Allure 报告]({report_url})" if report_url else "本轮暂无 Allure 报告"
+    if report_view_url:
+        report = f"[查看 Allure 测试报告]({report_view_url})"
+    elif artifact_url:
+        report = f"[下载 Allure 报告]({artifact_url})"
+    else:
+        report = "本轮暂无 Allure 报告"
     return {
         "msg_type": "interactive",
         "card": {
@@ -57,6 +62,7 @@ def main():
     summary = junit_summary(Path("reports"), bold_total=True).replace("失败 ", "未通过 ")
     payload = build_card(
         summary, os.getenv("REPORT_OUTCOME", ""), run_url, os.getenv("REPORT_ARTIFACT_URL", ""),
+        report_view_url=os.getenv("REPORT_VIEW_URL", ""),
         report_round=os.getenv("REPORT_ROUND", ""),
     )
 

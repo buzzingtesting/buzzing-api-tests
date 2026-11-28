@@ -226,6 +226,18 @@ jobs:
           name: ${{ env.BUZZING_ENV }}-allure-report${{ env.REPORT_ARTIFACT_SUFFIX }}
           path: reports/allure-report/index.html
           if-no-files-found: error
+      - name: Prepare the online Preview report
+        id: prepare_allure_preview
+        if: ${{ !cancelled() && env.BUZZING_ENV == 'preview' && steps.scenario_tests.outcome != 'skipped' && hashFiles('reports/allure-report/index.html') != '' }}
+        run: cp reports/allure-report/index.html "$RUNNER_TEMP/${BUZZING_ENV}-allure-report${REPORT_ARTIFACT_SUFFIX}.html"
+      - name: Upload the online Preview report
+        id: allure_preview
+        if: ${{ !cancelled() && steps.prepare_allure_preview.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ runner.temp }}/${{ env.BUZZING_ENV }}-allure-report${{ env.REPORT_ARTIFACT_SUFFIX }}.html
+          archive: false
+          if-no-files-found: error
       - name: Upload logs and reports
         if: always()
         uses: actions/upload-artifact@v7
@@ -251,6 +263,7 @@ jobs:
           LARK_SIGNING_SECRET: ${{ secrets.LARK_SIGNING_SECRET }}
           REPORT_OUTCOME: ${{ steps.scenario_tests.outputs.test_outcome || steps.scenario_tests.outcome }}
           REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
+          REPORT_VIEW_URL: ${{ steps.allure_preview.outputs.artifact-url }}
         run: python -m function.lark_report
       - name: Post the scheduled Preview report to the second Lark group
         if: >-
@@ -262,4 +275,5 @@ jobs:
           LARK_SIGNING_SECRET: ${{ secrets.LARK_SCHEDULED_SIGNING_SECRET }}
           REPORT_OUTCOME: ${{ steps.scenario_tests.outputs.test_outcome || steps.scenario_tests.outcome }}
           REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
+          REPORT_VIEW_URL: ${{ steps.allure_preview.outputs.artifact-url }}
         run: python -m function.lark_report
