@@ -139,7 +139,7 @@ Gmail 的 `gmail_password_env` 填应用专用密码对应的变量名。本地 
 - **GitHub Actions**。打开运行记录的 **Artifacts**，点击 `preview-allure-report.html` 在浏览器中查看单文件报告。`preview-allure-report` 提供 ZIP 下载。预检日志、JUnit 和场景日志在 `preview-scenarios` 中。自动补跑的产物名称带 `-retry`。查看和下载都需要登录有私有仓库访问权限的 GitHub 账号。
 - **M06 定时结果**。在同一轮 Actions 的 `preview-m06-rewards` 产物查看离线、发奖、重置与快照的 JUnit 和日志。对账批次、通知和续跑记录保存在 `m06-date-test-scheduled-*` 产物中。
 - **邮件**。完整 Preview 场景结束后，公司邮箱 `dejian.ding@trufflelabs.ai` 向 `BUZZING_REPORT_TO` 指定的地址发送结果及报告链接。仓库变量 `BUZZING_REPORT_FROM` 保存发件地址。若收件箱没有邮件，可先检查运行记录的 **Email the Preview report** 步骤和收件邮箱的垃圾邮件。
-- **Lark**。每轮 Preview 场景结束后，原群机器人发送结果卡片，附用例统计、「查看 Allure 测试报告」和 Actions 链接。在线报告上传失败时提供 ZIP 下载入口。每日定时运行及其自动补跑也会发送到第二个群。自动补跑的卡片标注「自动补跑」。排查推送时查看对应的 Lark 通知步骤。
+- **Lark**。每轮常规 Preview 运行结束后，两个群机器人都会发送结果卡片，覆盖定时、手动和自动补跑。卡片包含用例统计、「查看 Allure 测试报告」和 Actions 链接。在线报告上传失败时提供 ZIP 下载入口。自动补跑的卡片标注「自动补跑」。排查推送时查看对应的 Lark 通知步骤。
 
 完整 Preview 首轮有失败用例时，GitHub Actions 用该轮记录的 pytest 用例 ID 补跑一次。补跑使用新登录缓存，并独立上传报告、发送邮件和通知。已尝试提交或撤单的用例，以及依赖首轮买单的用例，会在补跑报告中记录跳过原因，按首轮订单标识回查。本地用 `run.py --retry-cases <首轮报告目录>/retry-cases.json` 指定失败清单，受控交易用例同时传入本轮对应的 `--trade-run` 参数。
 
@@ -154,7 +154,7 @@ Preview 的 `orders/submit` 若返回 `500 / INTERNAL / 1002` 且提示提交结
 | Preview CI 登录 `ci_tester` | 默认读取 `ci.yaml` 的 `ci_tester` | `BUZZING_GMAIL_APP_PASSWORD_CI` |
 | 报告邮件 | `BUZZING_REPORT_FROM`、`BUZZING_REPORT_TO` | `BUZZING_GMAIL_APP_PASSWORD_CI` |
 | Lark 群推送 | 无 | `LARK_WEBHOOK_URL`，开启签名校验时另加 `LARK_SIGNING_SECRET` |
-| Lark 第二群定时推送 | 无 | `LARK_SCHEDULED_WEBHOOK_URL`，开启签名校验时另加 `LARK_SCHEDULED_SIGNING_SECRET` |
+| Lark 第二群推送 | 无 | `LARK_SCHEDULED_WEBHOOK_URL`，开启签名校验时另加 `LARK_SCHEDULED_SIGNING_SECRET` |
 | Preview 改用 Mailosaur 取码 | 先在 `ci.yaml` 的 `testdata2` 填 Mailosaur 测试邮箱，再配置 `BUZZING_PREVIEW_TESTDATA=testdata2` 和 `MAILOSAUR_SERVER_ID` | `MAILOSAUR_API_KEY` |
 | Prod | `PROD_MAILOSAUR_SERVER_ID`、`BUZZING_PROD_PRIVY_APP_ID`、按需设置 `BUZZING_PROD_PRIVY_CLIENT_ID` | `PROD_MAILOSAUR_API_KEY`，改用 Gmail 取码时配置 `BUZZING_PROD_GMAIL_APP_PASSWORD` |
 
@@ -216,9 +216,9 @@ Cash 动态选样时，用 `"market_ids": ["<候选市场 ID>", "<候选市场 I
 
 GitHub Actions 的 **Buzzing API scenarios** 中，Preview 定时运行和新发起的手动运行都先执行日常用例，再串行执行 BTC 市价买卖、NBA 限价买卖和撤单，以及体育 Moneyline Draw 市价买卖。交易使用 `ci_tester` 的邮箱登录和钱包代签，执行结束时清理临时参数与登录缓存。重跑同一次 Actions 运行时跳过真实下单，用报告里的逻辑订单 ID 查证原单。
 
-**体育 Moneyline Draw 市价买入。** CI 从本轮体育列表随机尝试待开赛或进行中的比赛，从详情的 Moneyline 读取 Draw 选项。盘口和购买力校验通过后，使用 1.3 U 含费 Cash 预算下单，按逻辑订单号确认全成，核对本轮份额增量，再按订单哈希匹配持仓历史的成交金额和份额。找不到可交易的 Draw 时，Allure 记录跳过原因。
+**体育 Moneyline Draw 市价买入。** CI 从本轮体育列表随机尝试待开赛或进行中的比赛，从详情的 Moneyline 读取 Draw 选项。盘口和购买力校验通过后，使用 1.3 U 含费 Cash 预算下单，按逻辑订单号确认全成。持仓须增加，开放持仓的增量与订单记录相差小于 0.01 份时接受，差值记入 Allure。再按订单哈希核对持仓历史的成交金额、手续费和份额。找不到可交易的 Draw 时，Allure 记录跳过原因。
 
-**体育 Moneyline Draw 市价卖出。** 回查紧接的本轮买单，通过原条件和选项查询可卖持仓。一次卖出本轮新买入的可卖份额，按 0.01 份向下取整，保留既有持仓及精度零头。按逻辑单号确认卖出全成，按订单哈希核对历史净额，再核对可提现 Cash 增加及持仓减少。买单未完成或卖出前市场已关闭时，报告记录跳过原因。
+**体育 Moneyline Draw 市价卖出。** 回查紧接的本轮买单，通过原条件和选项查询可卖持仓。卖出数量取成交份额和实际持仓增量中的较小值，按 0.01 份向下取整，保留既有持仓及精度零头。按逻辑单号确认卖出全成，按订单哈希核对历史净额，再核对可提现 Cash 增加及持仓减少。买单未完成或卖出前市场已关闭时，报告记录跳过原因。
 
 **B3 Polymarket NBA 限价买入。** 用例按 24hr Volume 顺序找标题含 NBA 的多元事件，取列表中排第一的子市场，通过详情核对并随机尝试 Yes 或 No。限价取该方向当前卖一，按 3 U 含费预算筛选可买入足够拆成两笔限价卖单的份额，再用准备单的实际份额重新校验限价内深度。若该方向不满足条件则尝试另一方向，两个方向均不满足时继续筛下一个事件。提交后最多等 60 秒确认全部成交，成交详情见 Allure「NBA 限价买入成交详情」。未确认时标记跳过，订单按准备时设置的五分钟有效期处理。
 

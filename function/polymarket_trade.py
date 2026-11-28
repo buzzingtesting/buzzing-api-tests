@@ -348,7 +348,7 @@ def read_cash_position(client, uid, selected):
     return quantity, quantity - frozen
 
 
-def wait_for_cash_position(client, uid, selected, expected_raw, *, phase=None, baseline_raw=None):
+def wait_for_cash_position(client, uid, selected, expected_raw, *, phase=None, baseline_raw=None, tolerance_raw=0):
     deadline = monotonic() + POSITION_SYNC_SECONDS
     expected_totals = {expected_raw}
     # The open positions view can omit the untradeable remainder after both sells.
@@ -356,7 +356,7 @@ def wait_for_cash_position(client, uid, selected, expected_raw, *, phase=None, b
         expected_totals.add(baseline_raw)
     while True:
         total, available = read_cash_position(client, uid, selected)
-        if total in expected_totals:
+        if total in expected_totals or abs(total - expected_raw) <= tolerance_raw:
             return total, available
         delay = deadline - monotonic()
         if delay <= 0:

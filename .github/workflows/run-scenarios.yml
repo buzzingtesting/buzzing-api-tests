@@ -276,9 +276,9 @@ jobs:
           REPORT_ARTIFACT_URL: ${{ steps.allure_report.outputs.artifact-url }}
           REPORT_VIEW_URL: ${{ steps.allure_preview.outputs.artifact-url }}
         run: python -m function.lark_report
-      - name: Post the scheduled Preview report to the second Lark group
+      - name: Post the Preview report to the second Lark group
         if: >-
-          ${{ !cancelled() && github.event_name == 'schedule' && env.BUZZING_ENV == 'preview' &&
+          ${{ !cancelled() && env.BUZZING_ENV == 'preview' &&
               env.BUZZING_DISPUTE_MARKET_ID == '' && env.BUZZING_DISPUTE_NO_POSITION_MARKET_ID == '' &&
               env.BUZZING_DISPUTED_MARKET_ID == '' && steps.scenario_tests.outcome != 'skipped' }}
         env:

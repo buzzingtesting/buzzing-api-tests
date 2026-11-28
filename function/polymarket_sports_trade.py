@@ -130,9 +130,15 @@ def execute_sports_draw_buy(client, run, uid, signer, maker, record, config):
            side="BUY", order_type="MARKET", funding_source=run.funding)
     if Decimal(fill["filled_quote"]) > Decimal(shares(run.budget_raw)):
         raise ValueError(f"订单 {fill['order_id']} 的成交金额超过 1.3 U 预算")
-    after, _ = wait_for_cash_position(client, uid, selected, before + bought)
+    expected = before + bought
+    # The order can report two decimal places while positions retain six.
+    # Require a positive increase even when the fill is smaller than one sell step.
+    tolerance = min(bought, SELL_STEP_RAW) - 1
+    after, _ = wait_for_cash_position(client, uid, selected, expected, tolerance_raw=tolerance)
     record(stage="sports_draw_position_checked", **selected, **fill, position_before_buy=shares(before),
-           position_after_buy=shares(after), bought_shares=shares(bought))
+           position_after_buy=shares(after), bought_shares=shares(bought),
+           expected_position_after_buy=shares(expected), position_difference=shares(after - expected),
+           position_tolerance=shares(tolerance))
     verify_sports_draw_history(client, selected, fill, bought, record, side="buy", budget_raw=run.budget_raw)
     return MarketBuyFill(selected, neg_risk, uid, fill["logical_order_id"], fill["order_id"], bought, before)
 
@@ -163,8 +169,9 @@ def execute_sports_draw_sell(client, run, uid, signer, maker, record, buy):
     except MarketClosed as error:
         pytest.skip(str(error))
     baseline = buy.position_before_buy_raw
-    before, available = wait_for_cash_position(client, uid, selected, baseline + buy.quantity_raw, phase=phase)
-    quantity = buy.quantity_raw // SELL_STEP_RAW * SELL_STEP_RAW
+    before, available = wait_for_cash_position(client, uid, selected, baseline + buy.quantity_raw, phase=phase,
+                                               tolerance_raw=min(buy.quantity_raw, SELL_STEP_RAW) - 1)
+    quantity = min(buy.quantity_raw, before - baseline) // SELL_STEP_RAW * SELL_STEP_RAW
     if quantity <= 0 or quantity > available:
         raise ValueError("Moneyline Draw 没有足够可卖份额完成本轮卖单")
     bids = read_depth_levels(client, selected["position_id"], "bids")
@@ -189,8 +196,8 @@ def execute_sports_draw_sell(client, run, uid, signer, maker, record, buy):
     record(stage="sports_draw_sell_confirmed", **evidence, **fill, side="SELL", sold_shares=shares(sold))
     if sold != quantity or fill["logical_order_id"] == buy.logical_order_id:
         raise ValueError("Moneyline Draw 卖单的成交份额或逻辑订单号与预期不符")
-    remaining = buy.quantity_raw - sold
-    after, _ = wait_for_cash_position(client, uid, selected, baseline + remaining, baseline_raw=baseline)
+    remaining = before - baseline - sold
+    after, _ = wait_for_cash_position(client, uid, selected, before - sold, baseline_raw=baseline)
     proceeds = verify_sports_draw_history(client, evidence, fill, sold, record, side="sell")
     cash_after = wait_cash_snapshot(client, uid, cash_before + Decimal(shares(proceeds)))
     record(stage="sports_draw_sell_reconciled", **evidence, **fill, sold_shares=shares(sold),

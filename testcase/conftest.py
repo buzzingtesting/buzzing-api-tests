@@ -252,7 +252,8 @@ def run_trade(pytestconfig, request, trade_buy_results):
             "observed_limit_price", "observed_quantity_raw", "post_only", "requested_post_only", "last_trade_price", "eligible_quote_raw", "budget_raw", "max_budget_raw",
             "cash_before", "cash_open", "cash_after", "reserved_cash",
             "before", "after", "new_order_ids", "replayed", "replay_logical_order_id", "replay_order_ids",
-            "match_id", "position_after_buy", "cash_debit_raw", "cash_proceeds_raw", "verification_status",
+            "match_id", "position_after_buy", "expected_position_after_buy", "position_difference", "position_tolerance",
+            "cash_debit_raw", "cash_proceeds_raw", "verification_status",
             "volume_clob", "expected_fills", "actual_fills", "had_fill",
         }
         attachment_titles = {
